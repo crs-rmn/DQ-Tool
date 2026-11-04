@@ -33,7 +33,7 @@ def role_selector(ctx: Ctx) -> None:
         st.markdown("**Wer schaut hier hin?**")
         st.caption("Die Rolle ändert nur die Sicht, keine Rechte.")
         for name, r in ctx.roles.items():
-            if st.button(f"{ROLE_ICONS.get(name, '👤')} {name}  ·  {r.person}", key=f"rolepick_{name}",
+            if st.button(f"{ROLE_ICONS.get(name, '👤')} {name}", key=f"rolepick_{name}",
                          use_container_width=True, type="primary" if name == role else "secondary"):
                 st.session_state.role = name
                 st.session_state.nav_target = "Mein Dashboard"
@@ -51,7 +51,7 @@ def _picker(ctx: Ctx) -> None:
     for col, (name, r) in zip(cols, ctx.roles.items()):
         with col:
             st.markdown(f"### {ROLE_ICONS.get(name, '👤')} {name}")
-            st.caption(f"{r.person} · {r.title}")
+            st.caption(r.title)
             st.write(r.focus)
             if st.button("Dashboard öffnen", key=f"pick_{name}", use_container_width=True):
                 st.session_state.role = name
@@ -65,7 +65,7 @@ def render(ctx: Ctx) -> None:
         return
     r = ctx.roles[role]
     st.title(f"{ROLE_ICONS.get(role, '')} {role}")
-    st.markdown(f'<p class="subtitle">{r.person} · {r.focus} (Rolle wechseln: Button links oben)</p>',
+    st.markdown(f'<p class="subtitle">{r.focus}</p>',
                 unsafe_allow_html=True)
     {"CEO": _ceo, "Head of MDM": _mdm, "Domain Expert": _domain,
      "Head of Data Governance": _governance, "Head of AI": _ai}[role](ctx)
@@ -288,7 +288,7 @@ def _domain(ctx: Ctx) -> None:
     else:
         a = ctx.areas[pick]
         fs = findings_for_area(ctx.findings, a)
-        st.markdown(f"**{a.person}** · {a.title}  \n> „{a.voice}“")
+        st.markdown(f"**{a.title}**  \n> „{a.voice}“")
         st.caption("Die Zuordnung Fachbereich → Daten steht in config/roles.yaml und ist anpassbar.")
     products = {f.record_id for f in fs if f.record_id and f.record_id.isdigit() and len(f.record_id) == 10}
     c1, c2, c3, c4 = st.columns(4)

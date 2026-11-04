@@ -206,7 +206,6 @@ PAGES = [
     "Regeln",
     "Verlauf",
     "Einstellungen",
-    "Demo-Ablauf",
 ]
 
 with st.sidebar:
