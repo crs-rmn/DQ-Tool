@@ -107,7 +107,47 @@ def _load_pkg(input_dir: str, upload_signature: tuple = ()):
         for name, _size, _digest in upload_signature:
             if name in uploads:
                 extras.append((name, uploads[name]))
-    return load_package(input_dir, extra_bytes=extras or None, require_any=True)
+    if extras:
+        return load_package(input_dir, extra_bytes=extras, require_any=True)
+    return _load_pkg_disk_cached(input_dir)
+
+
+def _load_pkg_disk_cached(input_dir: str):
+    """Excel-Parsing ist langsam (große Dateien): geladenes Paket auf Platte zwischenspeichern.
+
+    Cache-Schlüssel = Dateinamen + Größe + Änderungszeit + Loader-Version. Jede Änderung
+    an den Dateien erzeugt automatisch einen neuen Cache; bei Fehlern wird normal geladen.
+    """
+    import hashlib
+    import pickle
+    from pathlib import Path
+    try:
+        d = Path(input_dir)
+        files = sorted(d.glob("*.xlsx"))
+        loader_py = Path(load_package.__code__.co_filename)
+        sig = [(f.name, f.stat().st_size, int(f.stat().st_mtime)) for f in files]
+        sig.append((loader_py.name, loader_py.stat().st_size, int(loader_py.stat().st_mtime)))
+        h = hashlib.sha1(repr(sig).encode()).hexdigest()[:16]
+        cache_dir = d.parent / ".cache"
+        cache_file = cache_dir / f"pkg_{h}.pkl"
+        if cache_file.exists():
+            with open(cache_file, "rb") as fh:
+                return pickle.load(fh)
+    except Exception:
+        cache_file = None
+    pkg = load_package(input_dir, require_any=True)
+    if cache_file is not None:
+        try:
+            cache_dir.mkdir(exist_ok=True)
+            for old in cache_dir.glob("pkg_*.pkl"):
+                old.unlink(missing_ok=True)
+            tmp = cache_file.with_suffix(".tmp")
+            with open(tmp, "wb") as fh:
+                pickle.dump(pkg, fh, protocol=pickle.HIGHEST_PROTOCOL)
+            tmp.replace(cache_file)
+        except Exception:
+            pass
+    return pkg
 
 
 @st.cache_resource(show_spinner=False)

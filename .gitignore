@@ -228,3 +228,6 @@ data/exports/
 
 # Lokale Tool-Caches (Claude Code / Impeccable)
 .impeccable/
+
+# Lade-Cache (lokal)
+data/.cache/

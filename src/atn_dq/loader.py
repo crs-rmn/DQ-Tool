@@ -115,7 +115,7 @@ def _detect_subsystem(file_name: str) -> str:
     Für die Mapping-Tabelle benutzen wir zwei Varianten.
     """
     low = file_name.lower()
-    if "sap" in low:
+    if "sap" in low or "marc" in low or "stammdaten" in low:
         return "SAP"
     if "hubspot" in low:
         return "HubSpot"
@@ -137,6 +137,22 @@ def _system_label(subsystem: str) -> str:
     return subsystem
 
 
+def _frame_from_raw(raw: pd.DataFrame, header_row: int) -> pd.DataFrame:
+    """Baut den DataFrame aus bereits gelesenen Rohdaten (wie read_excel(header=header_row))."""
+    names, seen = [], {}
+    for i, v in enumerate(raw.iloc[header_row].tolist()):
+        n = f"Unnamed: {i}" if pd.isna(v) else str(v)
+        if n in seen:
+            seen[n] += 1
+            n = f"{n}.{seen[n]}"
+        else:
+            seen[n] = 0
+        names.append(n)
+    df = raw.iloc[header_row + 1:].copy()
+    df.columns = names
+    return df.reset_index(drop=True)
+
+
 def _extract_sheets(xl: pd.ExcelFile, source_name: str) -> dict[str, LoadedSheet]:
     """Interne Helper-Funktion - extrahiert alle relevanten Blätter aus einer offenen Excel-Datei."""
     subsystem = _detect_subsystem(source_name)
@@ -149,7 +165,7 @@ def _extract_sheets(xl: pd.ExcelFile, source_name: str) -> dict[str, LoadedSheet
         if raw.empty:
             continue
         header_row = _detect_header_row(raw)
-        df = pd.read_excel(xl, sheet_name=sheet_name, header=header_row, dtype=object)
+        df = _frame_from_raw(raw, header_row)   # statt zweitem (langsamem) read_excel
         df = df.dropna(how="all").reset_index(drop=True)
         # verwerfe "Unnamed:"-Spalten (leere Excel-Spalten)
         keep = [c for c in df.columns if not str(c).startswith("Unnamed")]

@@ -71,13 +71,14 @@ def _attach_region(findings: Iterable[Finding], pkg: DataPackage) -> None:
     asset_country = _asset_country_map(pkg, account_country)
     workorder_country = _workorder_country_map(pkg, asset_country, account_country)
     product_country = _product_country_map(pkg)
+    contact_country = _contact_country_map(pkg, account_country)
     for f in findings:
         country = None
         if f.sheet == "Account" and f.record_id:
             country = account_country.get(f.record_id)
         elif f.sheet == "Contact" and f.record_id:
             # Contact-record_id nicht direkt vorhanden → über AccountId
-            country = _contact_country(pkg, f.record_id, account_country)
+            country = contact_country.get(f.record_id)
         elif f.sheet == "Asset" and f.record_id:
             country = asset_country.get(f.record_id)
         elif f.sheet == "WorkOrder" and f.record_id:
@@ -160,15 +161,17 @@ def _product_country_map(pkg: DataPackage) -> dict[str, str]:
     return out
 
 
-def _contact_country(pkg: DataPackage, contact_id: str, account_country: dict[str, str]) -> str | None:
+def _contact_country_map(pkg: DataPackage, account_country: dict[str, str]) -> dict[str, str]:
+    """Contact-Id -> Land (einmal aufgebaut statt pro Befund gesucht)."""
     con = pkg.get("SF_Contact")
+    out: dict[str, str] = {}
     if con is None:
-        return None
-    for _, row in con.df.iterrows():
-        if strip_str(row.get("Id")) == contact_id:
-            aid = strip_str(row.get("AccountId"))
-            return account_country.get(aid or "")
-    return None
+        return out
+    for cid, aid in zip(con.df.get("Id", []), con.df.get("AccountId", [])):
+        cid, aid = strip_str(cid), strip_str(aid)
+        if cid and aid and aid in account_country and cid not in out:
+            out[cid] = account_country[aid]
+    return out
 
 
 def _attach_responsibility(findings: Iterable[Finding], cfg: Config) -> None:

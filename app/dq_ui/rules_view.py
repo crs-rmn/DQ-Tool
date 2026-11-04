@@ -263,7 +263,15 @@ def _suggestions(ctx: Ctx, custom: list[CustomRule]) -> None:
                 "dann bestätigst du die Regel selbst.")
     sig = tuple(sorted((k, len(s.df)) for k, s in ctx.pkg.sheets.items())) + tuple(sorted(c.rule_id for c in custom))
     if st.session_state.get("sugg_sig") != sig:
-        st.session_state.sugg_cache = suggest_rules(ctx.pkg, custom)
+        total_rows = sum(len(s.df) for s in ctx.pkg.sheets.values())
+        if total_rows > 50_000 and not st.session_state.get("sugg_run"):
+            st.info(f"Große Datenmenge ({total_rows:,} Zeilen). Die Musteranalyse dauert ca. 1 Minute.".replace(",", "."))
+            if st.button("Muster jetzt analysieren", key="sugg_run_btn", type="primary"):
+                st.session_state.sugg_run = True
+                st.rerun()
+            return
+        with st.spinner("Analysiere Muster in den Daten ..."):
+            st.session_state.sugg_cache = suggest_rules(ctx.pkg, custom)
         st.session_state.sugg_sig = sig
     sugg, skipped = st.session_state.sugg_cache
     dismissed = st.session_state.setdefault("sugg_dismissed", set())
