@@ -96,7 +96,7 @@ def _load_cfg(cfg_dir: str):
     return load_config(cfg_dir)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def _load_pkg(input_dir: str, upload_signature: tuple = ()):
     # ``upload_signature`` dient nur als Cache-Key:
     # (name, size, hash) pro Upload-Datei. Die tatsächlichen Bytes holen
@@ -165,7 +165,21 @@ def _upload_signature() -> tuple:
     )
 
 
+def _rules_signature(cfg_dir: str) -> tuple:
+    """Änderungen an Regeln/Schaltern müssen die Analyse neu auslösen."""
+    out = []
+    for name in ("custom_rules.json", "rule_state.json", "weights.yaml", "governance.yaml"):
+        f = Path(cfg_dir) / name
+        out.append((name, int(f.stat().st_mtime_ns) if f.exists() else 0))
+    return tuple(out)
+
+
 def _run_analysis(cfg_dir: str, input_dir: str):
+    return _run_analysis_cached(cfg_dir, input_dir, _rules_signature(cfg_dir), _upload_signature())
+
+
+@st.cache_resource(show_spinner="Analysiere Daten ...")
+def _run_analysis_cached(cfg_dir: str, input_dir: str, rules_sig: tuple, upload_sig: tuple):
     cfg = _load_cfg(cfg_dir)
     pkg = _load_pkg(input_dir, _upload_signature())
     apply_builtin_state(cfg_dir, registry)          # dauerhaft gespeicherte Ein/Aus-Zustände
@@ -270,14 +284,17 @@ with st.sidebar:
                 st.session_state.uploaded_files_bytes = {}
                 st.success(f"{len(session_uploads)} Datei(en) in data/input/ gespeichert.")
             st.cache_data.clear()
+            st.cache_resource.clear()
             st.rerun()
         if c_clear.button("Upload leeren", use_container_width=True):
             st.session_state.uploaded_files_bytes = {}
             st.cache_data.clear()
+            st.cache_resource.clear()
             st.rerun()
     else:
         if st.button("Analyse neu ausführen", type="primary", use_container_width=True):
             st.cache_data.clear()
+            st.cache_resource.clear()
             st.rerun()
     st.divider()
     st.caption(f"Version {__import__('atn_dq').__version__}")
