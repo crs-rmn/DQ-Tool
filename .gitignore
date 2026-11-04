@@ -231,3 +231,6 @@ data/exports/
 
 # Lade-Cache (lokal)
 data/.cache/
+
+# Abgabe-CSV > 100 MB (GitHub-Limit), nur lokal
+abgabe/*.csv
