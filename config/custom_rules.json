@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "name": "Zolltarifnummer im gültigen Format (Produkte)",
+      "sheet_key": "SAP_FERT", "field": "STAWN", "rule_type": "format", "severity": "hoch",
+      "description": "Warentarifnummer muss 8 bis 11 Ziffern haben.",
+      "rationale": "Falsche oder fehlende Zolltarifnummern verzögern Sendungen beim Zoll (Logistik und Zoll, Rotterdam).",
+      "department": "Logistik und Zoll", "params": {"pattern": "\\d{8,11}"}, "enabled": true,
+      "rule_id": "CUST_ZOLL01", "created_at": "2026-11-04T12:00:00"
+    },
+    {
+      "name": "Zolltarifnummer im gültigen Format (Ersatzteile)",
+      "sheet_key": "SAP_ERSA", "field": "STAWN", "rule_type": "format", "severity": "hoch",
+      "description": "Warentarifnummer muss 8 bis 11 Ziffern haben.",
+      "rationale": "Falsche oder fehlende Zolltarifnummern verzögern Sendungen beim Zoll (Logistik und Zoll, Rotterdam).",
+      "department": "Logistik und Zoll", "params": {"pattern": "\\d{8,11}"}, "enabled": true,
+      "rule_id": "CUST_ZOLL02", "created_at": "2026-11-04T12:00:00"
+    },
+    {
+      "name": "Zolltarifnummer vorhanden (Ersatzteile)",
+      "sheet_key": "SAP_ERSA", "field": "STAWN", "rule_type": "completeness", "severity": "hoch",
+      "description": "Warentarifnummer darf nicht leer sein.",
+      "rationale": "Ohne Zolltarifnummer ist keine Ausfuhranmeldung möglich.",
+      "department": "Logistik und Zoll", "params": {}, "enabled": true,
+      "rule_id": "CUST_ZOLL03", "created_at": "2026-11-04T12:00:00"
+    },
+    {
+      "name": "Ursprungsland als ISO-Code (Ersatzteile)",
+      "sheet_key": "SAP_ERSA", "field": "HERKL", "rule_type": "format", "severity": "hoch",
+      "description": "Ursprungsland muss ein zweistelliger Ländercode in Großbuchstaben sein.",
+      "rationale": "Das Ursprungsland ist für Zollabfertigung und Präferenznachweise erforderlich.",
+      "department": "Logistik und Zoll", "params": {"pattern": "[A-Z]{2}"}, "enabled": true,
+      "rule_id": "CUST_ZOLL04", "created_at": "2026-11-04T12:00:00"
+    },
+    {
+      "name": "Ursprungsland als ISO-Code (Produkte)",
+      "sheet_key": "SAP_FERT", "field": "HERKL", "rule_type": "format", "severity": "hoch",
+      "description": "Ursprungsland muss ein zweistelliger Ländercode in Großbuchstaben sein.",
+      "rationale": "Das Ursprungsland ist für Zollabfertigung und Präferenznachweise erforderlich.",
+      "department": "Logistik und Zoll", "params": {"pattern": "[A-Z]{2}"}, "enabled": true,
+      "rule_id": "CUST_ZOLL05", "created_at": "2026-11-04T12:00:00"
+    },
+    {
+      "name": "Bruttogewicht größer 0",
+      "sheet_key": "SAP_MARA", "field": "BRGEW", "rule_type": "range", "severity": "hoch",
+      "description": "Bruttogewicht muss positiv sein.",
+      "rationale": "Frachtkosten werden aus dem Gewicht berechnet; fehlerhafte Gewichte führen zu falschen Frachtrechnungen.",
+      "department": "Logistik und Zoll", "params": {"min": 0.001}, "enabled": true,
+      "rule_id": "CUST_GEW01", "created_at": "2026-11-04T12:00:00"
+    }
+  ]
+}

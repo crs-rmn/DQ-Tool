@@ -33,6 +33,11 @@ from atn_dq.insights import (
 from atn_dq.loader import load_package
 from atn_dq.score import overall_score, region_scores
 from atn_dq.rules import registry
+from atn_dq.custom_rules import apply_builtin_state, load_custom_rules
+from atn_dq.financial import compute_impacts
+from atn_dq.roles import load_roles
+from dq_ui import insight_views, roles_view, rules_view
+from dq_ui.ctx import Ctx
 
 
 # -------------------------------------------------------------------- Setup --
@@ -123,7 +128,8 @@ def _upload_signature() -> tuple:
 def _run_analysis(cfg_dir: str, input_dir: str):
     cfg = _load_cfg(cfg_dir)
     pkg = _load_pkg(input_dir, _upload_signature())
-    result = run_analysis(pkg, cfg)
+    apply_builtin_state(cfg_dir, registry)          # dauerhaft gespeicherte Ein/Aus-Zustände
+    result = run_analysis(pkg, cfg, custom_rules=load_custom_rules(cfg_dir))
     overall = overall_score(result.findings, pkg, cfg)
     regions = region_scores(result.findings, pkg, cfg)
     return cfg, pkg, result, overall, regions
@@ -145,9 +151,13 @@ if "uploaded_files_bytes" not in st.session_state:
 
 # ---------------------------------------------------------------- Navigation --
 PAGES = [
+    "Mein Dashboard",
     "Übersicht",
     "Befunde",
     "Ursachenanalyse",
+    "Geschäftliche Auswirkungen",
+    "Fehler-Stammbaum",
+    "DQ-Assistent",
     "Länder & Regionen",
     "Fachbereiche",
     "Datenquellen",
@@ -163,6 +173,7 @@ with st.sidebar:
     st.markdown("### 🌾 AgroTechNova")
     st.markdown("**Data Quality Copilot**")
     st.caption("Datenvertrauen. Transparenz. Bessere Entscheidungen.")
+    role_slot = st.container()   # Rollen-Button, wird nach der Analyse gefüllt
     st.divider()
     # falls eine andere Seite die Navigation umschalten will
     default_idx = 0
@@ -278,10 +289,39 @@ def _go_to_befunde(filters: dict):
     st.rerun()
 
 
+def _go_page(name: str):
+    st.session_state.nav_target = name
+    st.rerun()
+
+
+_roles, _areas = load_roles(CONFIG_DIR)
+_custom_rules = load_custom_rules(CONFIG_DIR)
+ctx = Ctx(
+    cfg=cfg, pkg=pkg, result=result, findings=findings, overall=overall, regions=regions,
+    impacts=compute_impacts(pkg, findings), roles=_roles, areas=_areas, config_dir=CONFIG_DIR,
+    history=_history(), kpi=kpi, badge=_badge, goto_findings=_go_to_befunde, goto_page=_go_page,
+    rules_info=rules_view.build_rules_info(CONFIG_DIR, result, _custom_rules),
+)
+with role_slot:
+    roles_view.role_selector(ctx)
+
+
 # =============================================================================
 #                              ÜBERSICHT
 # =============================================================================
-if page == "Übersicht":
+if page == "Mein Dashboard":
+    roles_view.render(ctx)
+
+elif page == "Geschäftliche Auswirkungen":
+    insight_views.render_financial(ctx)
+
+elif page == "Fehler-Stammbaum":
+    insight_views.render_lineage(ctx)
+
+elif page == "DQ-Assistent":
+    insight_views.render_assistant(ctx)
+
+elif page == "Übersicht":
     st.title("Übersicht Datenqualität")
     st.markdown(
         '<p class="subtitle">So steht AgroTechNova heute - wo ist es am dringendsten?</p>',
@@ -312,6 +352,15 @@ if page == "Übersicht":
         f"(= {(affected_count / max(overall.total_records, 1)) * 100:.1f} % aller geprüften Datensätze)."
         .replace(",", ".")
     )
+
+    st.markdown("---")
+
+    st.subheader("Geschäftliche Auswirkungen")
+    st.markdown('<p class="help-text">Nur belastbar berechnete Beträge. Wo Daten fehlen, steht das ausdrücklich da.</p>',
+                unsafe_allow_html=True)
+    insight_views.financial_block(ctx, compact=True)
+    if st.button("Berechnungsgrundlage und Unsicherheit ansehen →", key="ov_fin"):
+        _go_page("Geschäftliche Auswirkungen")
 
     st.markdown("---")
 
@@ -974,31 +1023,7 @@ elif page == "Vorher / Nachher":
 #                              REGELN
 # =============================================================================
 elif page == "Regeln":
-    st.title("Regel-Engine")
-    st.markdown(
-        '<p class="subtitle">Alle Prüfungen - jede einzeln dokumentiert.</p>',
-        unsafe_allow_html=True,
-    )
-    rows = []
-    rid_counts = {}
-    for f in findings:
-        rid_counts[f.rule_id] = rid_counts.get(f.rule_id, 0) + 1
-    for rule in registry.all():
-        rows.append({
-            "Regel-ID":        rule.rule_id,
-            "Name":            rule.name,
-            "Kategorie":       rule.category,
-            "Dimension":       rule.dimension,
-            "Standardschwere": rule.default_severity,
-            "Beschreibung":    rule.description,
-            "Aktiv":           "Ja" if rule.enabled else "Nein",
-        })
-    rdf = pd.DataFrame(rows)
-    st.dataframe(rdf, use_container_width=True, hide_index=True)
-    st.caption(
-        f"{len(registry)} Regeln registriert. "
-        "Neue Regeln können in `src/atn_dq/rules/` ergänzt werden - sie erscheinen automatisch."
-    )
+    rules_view.render(ctx)
 
 # =============================================================================
 #                              VERLAUF

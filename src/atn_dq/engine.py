@@ -10,7 +10,7 @@ Schritte pro Analyse-Lauf:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 from .config import Config
@@ -28,12 +28,15 @@ class EngineResult:
     findings: list[Finding]
     rule_count: int
     executed_rules: list[str]
+    custom_stats: dict = field(default_factory=dict)  # rule_id -> CustomRuleStat
+    rule_finding_counts: dict = field(default_factory=dict)  # Registry-Regel-ID -> Anzahl Befunde
 
 
-def run_analysis(pkg: DataPackage, cfg: Config) -> EngineResult:
+def run_analysis(pkg: DataPackage, cfg: Config, custom_rules=None) -> EngineResult:
     """Führt alle aktivierten Regeln aus und reichert die Befunde an."""
     findings: list[Finding] = []
     executed: list[str] = []
+    rule_counts: dict[str, int] = {}
     for rule in registry.all():
         if not rule.enabled:
             continue
@@ -44,13 +47,22 @@ def run_analysis(pkg: DataPackage, cfg: Config) -> EngineResult:
             continue
         findings.extend(new)
         executed.append(rule.rule_id)
+        rule_counts[rule.rule_id] = len(new)
+
+    custom_stats: dict = {}
+    if custom_rules:
+        from .custom_rules import run_custom_rules
+        cf, custom_stats = run_custom_rules(custom_rules, pkg)
+        findings.extend(cf)
+        executed.extend(r.rule_id for r in custom_rules if r.enabled)
 
     _attach_region(findings, pkg)
     _attach_responsibility(findings, cfg)
     _group_causes_and_effects(findings)
     apply_priority(findings, cfg)
     findings.sort(key=lambda f: (-f.priority_score, f.severity))
-    return EngineResult(findings=findings, rule_count=len(executed), executed_rules=executed)
+    return EngineResult(findings=findings, rule_count=len(executed), executed_rules=executed,
+                        custom_stats=custom_stats, rule_finding_counts=rule_counts)
 
 
 def _attach_region(findings: Iterable[Finding], pkg: DataPackage) -> None:

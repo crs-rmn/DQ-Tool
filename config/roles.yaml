@@ -1,0 +1,73 @@
+# Rollen und Fachbereiche aus dem Hackathon-Briefing ("Eure Jury" und "Stimmen aus dem Unternehmen").
+# Die Rolle ist eine Benutzerperspektive, keine Rechteverwaltung.
+# Die Zuordnung Fachbereich -> Daten (systems / sheets / fields / categories) ist ein
+# Vorschlag und kann hier angepasst werden. Ein Befund gehört zu einem Fachbereich,
+# wenn mindestens eines der Kriterien passt.
+
+roles:
+  CEO:
+    person: Kevin
+    title: CEO
+    focus: "Wo stehen wir, wo ist es am dringendsten, wer packt was zuerst an und woran merken wir, dass es wirkt."
+  Head of MDM:
+    person: Norbert
+    title: Head of MDM
+    focus: "Flexible, zukunftssichere Werkzeuge; Fachabteilungen sollen Datenqualität selbst bewerten und verbessern."
+  Domain Expert:
+    person: Mike
+    title: Domain Expert DQ
+    focus: "Wo schadet schlechte Datenqualität, Ursache und Folgefehler verbinden, nachvollziehbarer Score."
+  Head of Data Governance:
+    person: Lukas
+    title: Head of Data Governance
+    focus: "Wie hängen die Daten über Systeme hinweg zusammen, welches System ist maßgeblich, wer verantwortet was."
+  Head of AI:
+    person: Moritz
+    title: Head of AI
+    focus: "Wie wurde KI eingesetzt, wie entsteht die Befundliste nachvollziehbar, funktioniert das Tool auch mit neuen Daten."
+
+# Fachbereiche der Domain Experts (Stimmen aus dem Unternehmen)
+domain_areas:
+  Vertrieb EMEA:
+    person: Lena Vos
+    title: Vertriebsleitung EMEA, Eindhoven
+    voice: "Ein Händler hat im Online-Katalog einen anderen Preis gesehen als in unserem Angebot."
+    categories: [Konsistenz_Preis, Validitaet_Preis]
+    sheets: [PricebookEntry, Pricebook2, Price Book Items]
+  Marketing Operations (HubSpot):
+    person: Jonas Brandt
+    title: Marketing Operations (HubSpot)
+    voice: "Unser Katalog passt nicht zu dem, was der Vertrieb verkauft."
+    systems: [HubSpot]
+  Produktmanagement:
+    person: Dr. Anouk de Wit
+    title: Produktmanagement
+    voice: "Wenn ich ein Produkt auslaufen lasse, weiß ich nie, ob Vertrieb und Marketing das mitbekommen."
+    categories: [Validitaet_Status, Konsistenz_Produkt]
+    sheets: [Produkte (FERT), Product2]
+  Disposition Ersatzteile:
+    person: Marta Kowalczyk
+    title: Disposition, Ersatzteillager Poznań
+    voice: "Die Bestellvorschläge ergeben oft keinen Sinn, und manche Teile führen wir doppelt."
+    sheets: [Ersatzteile (ERSA)]
+  Logistik und Zoll:
+    person: Henk Jansen
+    title: Logistik und Zoll, Rotterdam
+    voice: "Sendungen hängen beim Zoll fest, und die Frachtkosten passen nicht zur Rechnung."
+    fields: [STAWN, HERKL, NTGEW, BRGEW, GEWEI, VOLUM, VOLEH, GROES]
+  Field Service:
+    person: Carla Meier
+    title: Leitung Field Service
+    voice: "Meine Techniker fahren zu Einsätzen, bei denen Gerät oder Kunde nicht stimmen."
+    sheets: [Asset, WorkOrder]
+  Customer Success:
+    person: Ingrid Larsen
+    title: Customer Success Nordeuropa
+    voice: "Manche Kunden gibt es bei uns offenbar mehrfach, und im Marktbericht fehlt die Hälfte."
+    sheets: [Account, Contact]
+  Controlling:
+    person: Felix Brenner
+    title: Controlling
+    voice: "Bei einigen Produkten sieht es aus, als würden wir mit Verlust verkaufen."
+    categories: [Anomalie_Preis]
+    fields: [price, hs_cost_of_goods_sold, hs_price_eur, UnitPrice, Price, ATN_Wartungskosten__c]
