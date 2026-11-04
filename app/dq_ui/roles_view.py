@@ -92,6 +92,181 @@ def _clickable_bar(df: pd.DataFrame, cat_col: str, key: str, height: int = 280):
     return pts[0].get("y") if pts else None
 
 
+# ------------------------------------------------ CEO: Themen statt Einzelbefunde --
+THEMES = [  # (Präfix der Kategorie, Themenname, Erklärung für das Management)
+    ("Referenz", "Kaputte Verknüpfungen zwischen Datensätzen",
+     "Aufträge, Anlagen, Kontakte oder Preislisten zeigen auf Datensätze, die es nicht (mehr) gibt."),
+    ("Eindeutigkeit", "Doppelte Datensätze und Schlüssel",
+     "Dieselbe Materialnummer oder Seriennummer kommt mehrfach vor. Auswertungen und Bestellungen werden unsicher."),
+    ("Konsistenz_Preis", "Preise widersprechen sich zwischen Systemen",
+     "Derselbe Artikel hat in Salesforce und HubSpot unterschiedliche Preise."),
+    ("Validitaet_Preis", "Ungültige oder unplausible Preise",
+     "Preise sind leer, negativ oder liegen unter den Herstellkosten."),
+    ("Konsistenz_Produkt", "Produktstammdaten passen nicht zusammen",
+     "Namen oder Eigenschaften desselben Produkts unterscheiden sich zwischen den Systemen."),
+    ("Validitaet_Datum", "Unplausible Datumsangaben",
+     "Termine liegen in falscher Reihenfolge oder außerhalb des sinnvollen Zeitraums."),
+    ("Vollstaendigkeit", "Fehlende Pflichtangaben",
+     "Pflichtfelder sind leer, dadurch sind Datensätze nicht nutzbar."),
+    ("Validitaet_Status", "Ungültige Statuswerte",
+     "Status- oder Auswahlfelder enthalten Werte, die nicht erlaubt sind."),
+    ("Benutzerregel", "Eigene Regeln (z. B. Zoll, Herkunft, Branche)",
+     "Verstöße gegen Regeln, die das Team selbst angelegt hat."),
+    ("Anomalie", "Auffällige Ausreißer", "Werte weichen stark vom üblichen Bereich ab."),
+]
+
+
+def _theme_of(f) -> tuple[str, str]:
+    for prefix, name, expl in THEMES:
+        if f.category.startswith(prefix):
+            return name, expl
+    return "Sonstige Probleme", "Weitere Regelverstöße."
+
+
+def build_themes(findings, max_themes: int = 10) -> list[dict]:
+    """Fasst kritische Befunde zu wenigen Themen zusammen (Rang: Summe der Prioritätswerte)."""
+    from atn_dq.insights import unique_affected_records
+    buckets: dict[str, list] = {}
+    expl: dict[str, str] = {}
+    for f in findings:
+        name, ex = _theme_of(f)
+        buckets.setdefault(name, []).append(f)
+        expl[name] = ex
+    themes = []
+    for name, fs in buckets.items():
+        resp = Counter(f.responsibility for f in fs if f.responsibility).most_common(1)
+        themes.append({
+            "name": name, "explain": expl[name], "findings": fs, "count": len(fs),
+            "records": len(unique_affected_records(fs)),
+            "systems": [k for k, _ in Counter(f.system for f in fs).most_common()],
+            "rank": sum(f.priority_score for f in fs),
+            "owner": resp[0][0] if resp else "",
+            "example": max(fs, key=lambda x: x.priority_score).message,
+        })
+    themes.sort(key=lambda t: -t["rank"])
+    if len(themes) > max_themes:      # Rest zu einem Sammelthema
+        rest = themes[max_themes - 1:]
+        fs = [f for t in rest for f in t["findings"]]
+        themes = themes[:max_themes - 1] + [{
+            "name": "Weitere Themen", "explain": "Kleinere Themen: " + ", ".join(t["name"] for t in rest),
+            "findings": fs, "count": len(fs), "records": len(unique_affected_records(fs)),
+            "systems": [k for k, _ in Counter(f.system for f in fs).most_common()],
+            "rank": 0, "owner": "", "example": max(fs, key=lambda x: x.priority_score).message}]
+    return themes
+
+
+def _fmt(n: int) -> str:
+    return f"{n:,}".replace(",", ".")
+
+
+def _ceo_themes(ctx: Ctx, sel: dict) -> None:
+    crit = [f for f in ctx.findings if f.severity == "hoch"]
+    themes = build_themes(crit)
+    st.subheader("Die wichtigsten Themen")
+    st.caption(f"{_fmt(len(crit))} kritische Befunde, zusammengefasst zu {len(themes)} Themen. "
+               "Rang = Anzahl × Dringlichkeit. Die drei wichtigsten sind hervorgehoben.")
+    top, rest = themes[:3], themes[3:]
+    for col, t in zip(st.columns(len(top)), top):
+        with col, st.container(border=True):
+            st.markdown(f"**🔴 {t['name']}**")
+            st.markdown(f"<span style='font-size:1.7rem;font-weight:700;color:#b31b2a'>{_fmt(t['records'])}</span> "
+                        f"betroffene Datensätze", unsafe_allow_html=True)
+            st.caption(f"{_fmt(t['count'])} Befunde · {', '.join(t['systems'])}")
+            st.write(t["explain"])
+            if t["owner"]:
+                st.caption(f"Zuständig: {t['owner']}")
+            if st.button("Probleme ansehen", key=f"theme_{t['name']}", use_container_width=True):
+                sel["Thema"] = t["name"]
+                st.session_state.ceo_sel = sel
+                st.rerun()
+    if rest:
+        with st.expander(f"Weitere Themen ({len(rest)})", expanded=False):
+            for t in rest:
+                c = st.columns([5, 2, 2])
+                c[0].markdown(f"**{t['name']}**  \n<small>{t['explain']}</small>", unsafe_allow_html=True)
+                c[1].markdown(f"{_fmt(t['records'])} Datensätze  \n<small>{', '.join(t['systems'])}</small>",
+                              unsafe_allow_html=True)
+                if c[2].button("Ansehen", key=f"theme_{t['name']}"):
+                    sel["Thema"] = t["name"]
+                    st.session_state.ceo_sel = sel
+                    st.rerun()
+    return themes
+
+
+def _theme_facts(t: dict) -> dict:
+    """Echte Kennzahlen je Thema, abgeleitet aus den Befunden."""
+    fs = t["findings"]
+    objs = Counter(f"{f.system} · {f.sheet}" for f in fs).most_common(2)
+    corr = Counter(f.correction_suggestion for f in fs if f.correction_suggestion).most_common(1)
+    fld = Counter(f.field_name for f in fs if f.field_name).most_common(1)
+    return {"objects": ", ".join(o for o, _ in objs), "rules": len({f.rule_id for f in fs}),
+            "rule": Counter(f.rule_name for f in fs).most_common(1)[0][0],
+            "correction": corr[0][0] if corr else "", "field": fld[0][0] if fld else ""}
+
+
+def _rule_table(fs, limit: int = 10) -> None:
+    """Kompakte Tabelle: ein Eintrag je Regel statt tausender Einzelbefunde."""
+    groups: dict[str, list] = {}
+    for f in fs:
+        groups.setdefault(f.rule_id, []).append(f)
+    rows = []
+    for g in sorted(groups.values(), key=lambda g: -len(g))[:limit]:
+        f0 = max(g, key=lambda x: x.priority_score)
+        rows.append({"Problem": f0.rule_name, "Anzahl": len(g), "Feld": f0.field_name,
+                     "Beispiel": f0.message[:110], "Korrekturvorschlag": f0.correction_suggestion or "Fachlich prüfen"})
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    if len(groups) > limit:
+        st.caption(f"{len(groups) - limit} weitere Regeln. Vollständige Liste in der Befundliste.")
+
+
+def _theme_cards(ctx: Ctx, findings, key: str, lines, title: str = "Die wichtigsten Themen",
+                 selectable: bool = True):
+    """Themen-Karten (3 hervorgehoben). Liefert das gewählte Thema (dict) oder None."""
+    themes = build_themes(findings)
+    state = f"{key}_theme"
+    st.subheader(title)
+    if not themes:
+        st.success("Keine kritischen Themen.")
+        return None
+    st.caption(f"{_fmt(len(findings))} Befunde, zusammengefasst zu {len(themes)} Themen. "
+               "Rang = Anzahl × Dringlichkeit. Die drei wichtigsten sind hervorgehoben.")
+    top, rest = themes[:3], themes[3:]
+
+    def pick(t):
+        st.session_state[state] = t["name"]
+        st.rerun()
+
+    for col, t in zip(st.columns(len(top)), top):
+        with col, st.container(border=True):
+            st.markdown(f"**🔴 {t['name']}**")
+            st.markdown(f"<span style='font-size:1.7rem;font-weight:700;color:#b31b2a'>{_fmt(t['records'])}</span> "
+                        f"betroffene Datensätze", unsafe_allow_html=True)
+            st.caption(f"{_fmt(t['count'])} Befunde · {', '.join(t['systems'])}")
+            st.write(t["explain"])
+            for ln in lines(t, _theme_facts(t)):
+                st.caption(ln)
+            if selectable and st.button("Details ansehen", key=f"{key}_pick_{t['name']}", use_container_width=True):
+                pick(t)
+    if rest:
+        with st.expander(f"Weitere Themen ({len(rest)})", expanded=False):
+            for t in rest:
+                c = st.columns([5, 2, 2])
+                c[0].markdown(f"**{t['name']}**  \n<small>{t['explain']}</small>", unsafe_allow_html=True)
+                c[1].markdown(f"{_fmt(t['records'])} Datensätze  \n<small>{', '.join(t['systems'])}</small>",
+                              unsafe_allow_html=True)
+                if selectable and c[2].button("Ansehen", key=f"{key}_pick_{t['name']}"):
+                    pick(t)
+    chosen = next((t for t in themes if t["name"] == st.session_state.get(state)), None)
+    if chosen and selectable:
+        bc = st.columns([6, 1])
+        bc[0].markdown(f"**Gewähltes Thema:** {chosen['name']}")
+        if bc[1].button("Zurücksetzen", key=f"{key}_reset"):
+            st.session_state.pop(state, None)
+            st.rerun()
+        return chosen
+    return None
+
+
 def _ceo(ctx: Ctx) -> None:
     f_all = ctx.findings
     valid = sorted([r for r in ctx.regions if r.sufficient_data], key=lambda r: r.score)
@@ -99,8 +274,9 @@ def _ceo(ctx: Ctx) -> None:
 
     c1, c2, c3, c4 = st.columns(4)
     ctx.kpi(c1, "Gesamt-Score (0-100)", f"{ctx.overall.score}", help_text="Gewichtete Datenqualität.")
-    ctx.kpi(c2, "Kritische Befunde", f"{ctx.overall.findings_high}", "prio-h",
-            help_text="Schweregrad hoch.")
+    n_themes = len(build_themes([f for f in f_all if f.severity == "hoch"]))
+    ctx.kpi(c2, "Kritische Themen", f"{n_themes}", "prio-h",
+            help_text=f"{_fmt(ctx.overall.findings_high)} kritische Befunde, zu Themen zusammengefasst.")
     if valid:
         ctx.kpi(c3, "Schwächste Region", f"{valid[0].region}", "prio-h",
                 help_text=f"Score {valid[0].score}, {valid[0].findings_high} kritische Befunde.")
@@ -113,6 +289,10 @@ def _ceo(ctx: Ctx) -> None:
         ctx.kpi(c4, "Finanzielles Risiko", "n/a", help_text=NOT_CALCULABLE)
 
     st.markdown(" ")
+    sel = st.session_state.setdefault("ceo_sel", {"Region": None, "System": None, "Ursache": None})
+    sel.setdefault("Thema", None)
+    _ceo_themes(ctx, sel)
+    st.markdown("---")
     cl, cr = st.columns([3, 2])
     with cl:
         st.subheader("Entwicklung der Datenqualität")
@@ -145,11 +325,10 @@ def _ceo(ctx: Ctx) -> None:
         st.caption("Woran man merkt, dass es wirkt: Score steigt und kritische Befunde sinken von Lauf zu Lauf.")
 
     st.markdown("---")
-    st.subheader("Wo ist es am dringendsten?")
+    st.subheader("Details nach Region, System und Ursache")
     st.caption("Klick auf einen Balken filtert die anderen Ansichten. Unten erscheinen die konkreten Probleme.")
     hide_low = st.toggle("Niedrige Befunde ausblenden", value=True, key="ceo_hide_low")
     base = [f for f in f_all if not (hide_low and f.severity == "niedrig")]
-    sel = st.session_state.setdefault("ceo_sel", {"Region": None, "System": None, "Ursache": None})
     last = st.session_state.setdefault("ceo_last_click", {})
 
     def sub(skip: str):
@@ -160,6 +339,9 @@ def _ceo(ctx: Ctx) -> None:
             out = [f for f in out if f.system == sel["System"]]
         if skip != "Ursache" and sel["Ursache"]:
             out = [f for f in out if _label(f.category) == sel["Ursache"]]
+        if sel.get("Thema"):
+            out = [f for f in out if _theme_of(f)[0] == sel["Thema"]
+                   or (sel["Thema"] == "Weitere Themen" and f.severity == "hoch")]
         return out
 
     def counts(fs, keyfn):
@@ -189,7 +371,7 @@ def _ceo(ctx: Ctx) -> None:
         bc = st.columns([6, 1])
         bc[0].markdown("**Auswahl:** " + " → ".join(f"`{k}: {v}`" for k, v in active.items()))
         if bc[1].button("Zurücksetzen", key="ceo_reset"):
-            st.session_state.ceo_sel = {"Region": None, "System": None, "Ursache": None}
+            st.session_state.ceo_sel = {"Region": None, "System": None, "Ursache": None, "Thema": None}
             st.session_state.ceo_last_click = {}
             for d in ("Region", "System", "Ursache"):
                 st.session_state.pop(f"ceo_chart_{d}", None)
@@ -224,6 +406,14 @@ def _mdm(ctx: Ctx) -> None:
             help_text="Befunde, die nicht als behoben markiert sind.")
     ctx.kpi(c4, "Aktive Regeln", f"{ctx.result.rule_count}",
             help_text=f"davon {len(ctx.result.custom_stats)} Benutzerregeln mit Treffern/Prüfung.")
+
+    chosen = _theme_cards(
+        ctx, [f for f in fs if f.severity == "hoch"], "mdm",
+        lambda t, x: [f"Datenobjekte: {x['objects']}", f"Maßnahme: {x['correction'] or 'fachlich prüfen'}"])
+    if chosen:
+        _rule_table(chosen["findings"])
+        if st.button("Dieses Thema in der Befundliste öffnen", key="mdm_theme_open"):
+            ctx.goto_findings({"System": chosen["systems"]})
 
     st.subheader("Fehler nach System und Qualitätsdimension")
     mat = Counter((f.system, f.dimension) for f in fs if f.severity != "niedrig")
@@ -300,26 +490,19 @@ def _domain(ctx: Ctx) -> None:
         st.success("Für diesen Fachbereich gibt es aktuell keine Befunde.")
         return
 
-    st.subheader("Was ist falsch und was ist zu tun?")
-    groups: dict[str, list] = {}
-    for f in fs:
-        groups.setdefault(f.rule_id, []).append(f)
-    ordered = sorted(groups.values(), key=lambda g: (-sum(x.severity == "hoch" for x in g), -len(g)))
-    rows = []
-    for g in ordered[:25]:
-        f0 = max(g, key=lambda x: x.priority_score)
-        rows.append({"Schwere": f0.severity, "Problem": f0.rule_name, "Anzahl": len(g), "Feld": f0.field_name,
-                     "Beispiel": f0.message[:110], "Korrekturvorschlag": f0.correction_suggestion or "Fachlich prüfen",
-                     "Art": f0.correction_type.replace("_", " ")})
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-    st.subheader("Probleme prüfen")
-    sev = st.multiselect("Schweregrad", ["hoch", "mittel", "niedrig"], default=["hoch", "mittel"], key="dx_sev")
-    shown = [f for f in sorted(fs, key=lambda x: -x.priority_score) if f.severity in sev]
-    if shown:
-        idx = st.selectbox("Befund", range(min(len(shown), 200)), key="dx_pick",
-                           format_func=lambda i: f"[{shown[i].priority_label}] {shown[i].sheet} Z{shown[i].row}: {shown[i].message[:90]}")
-        f = shown[idx]
+    crit = [f for f in fs if f.severity == "hoch"] or [f for f in fs if f.severity == "mittel"] or fs
+    chosen = _theme_cards(
+        ctx, crit, "dx",
+        lambda t, x: [f"Betroffenes Feld: {x['field'] or '-'}", f"Korrektur: {x['correction'] or 'fachlich prüfen'}"],
+        title="Was ist falsch und was ist zu tun?")
+    shown = chosen["findings"] if chosen else []
+    if chosen:
+        _rule_table(shown, limit=15)
+        st.subheader("Einzelnes Problem prüfen")
+        top = sorted(shown, key=lambda x: -x.priority_score)[:50]
+        idx = st.selectbox("Beispiel (die 50 dringendsten)", range(len(top)), key="dx_pick",
+                           format_func=lambda i: f"[{top[i].priority_label}] {top[i].sheet} Z{top[i].row}: {top[i].message[:90]}")
+        f = top[idx]
         d1, d2 = st.columns(2)
         with d1:
             st.markdown(f"**Wo:** {f.file} → {f.sheet}, Zeile {f.row}, Feld `{f.field_name}`")
@@ -339,7 +522,10 @@ def _domain(ctx: Ctx) -> None:
                 else:
                     st.session_state.resolved_ids.discard(f.finding_id)
             st.caption("Der Status gilt für diese Sitzung. Es werden keine Quelldaten verändert.")
+    else:
+        st.caption("Wähle ein Thema, um die konkreten Probleme, Korrekturvorschläge und den Export zu sehen.")
     df = findings_to_dataframe(shown or fs)
+    st.caption("Export: " + ("gewähltes Thema" if shown else "alle Befunde dieses Fachbereichs"))
     e1, e2 = st.columns(2)
     e1.download_button("Befunde als CSV exportieren", df.to_csv(index=False).encode("utf-8-sig"),
                        file_name="befunde_fachbereich.csv", mime="text/csv", key="dx_csv")
@@ -349,6 +535,15 @@ def _domain(ctx: Ctx) -> None:
 
 # ------------------------------------------------------------- Governance --
 def _governance(ctx: Ctx) -> None:
+    gov_fs = [f for f in ctx.findings if f.severity == "hoch"]
+
+    def gov_lines(t, x):
+        cross = "systemübergreifend, Governance-Entscheidung nötig" if len(t["systems"]) > 1 else "innerhalb eines Systems"
+        return [f"Zuständig laut Konfiguration: {t['owner'] or 'nicht zugeordnet'}", f"Reichweite: {cross}"]
+
+    chosen = _theme_cards(ctx, gov_fs, "gov", gov_lines, title="Themen mit Klärungsbedarf")
+    if chosen:
+        _rule_table(chosen["findings"], limit=8)
     st.subheader("Welches System ist wofür maßgeblich?")
     lead = ctx.cfg.leading_systems
     st.dataframe(pd.DataFrame([{"Datenbereich": k.replace("_", " "), "Führendes System": v.replace("_", " "),
@@ -410,9 +605,16 @@ def _ai(ctx: Ctx) -> None:
          "Warum": "Ein lokales Modell könnte Fragen freier verstehen; Antworten bleiben an die Befunde gebunden."},
     ]), use_container_width=True, hide_index=True)
     st.caption(f"Benutzerregeln aktiv: {n_custom}. Das Tool arbeitet mit beliebigen Spalten; Regeln werden über die Oberfläche ergänzt.")
+    chosen = _theme_cards(
+        ctx, [f for f in ctx.findings if f.severity == "hoch"], "ai",
+        lambda t, x: [f"Geprüft durch {x['rules']} Regel(n), häufigste: {x['rule']}",
+                      f"Nachvollziehbar bis zur Excel-Zeile"],
+        title="Wo findet das Tool die meisten kritischen Probleme?")
     st.subheader("Befund bis zur Quellzeile zurückverfolgen")
-    if ctx.findings:
-        top = sorted(ctx.findings, key=lambda f: -f.priority_score)[:100]
+    if not chosen:
+        st.caption("Wähle oben ein Thema, dann kannst du einen Befund bis zur Originalzeile zurückverfolgen.")
+    if chosen:
+        top = sorted(chosen["findings"], key=lambda f: -f.priority_score)[:50]
         i = st.selectbox("Befund", range(len(top)), key="ai_trace",
                          format_func=lambda i: f"{top[i].rule_name} · {top[i].sheet} Z{top[i].row}")
         f = top[i]
