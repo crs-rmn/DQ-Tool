@@ -218,3 +218,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- projektspezifisch (AgroTechNova DQ Copilot) ----
+.venv/
+.DS_Store
+data/history.sqlite
+data/exports/
+.streamlit/secrets.toml
+
+# Lokale Tool-Caches (Claude Code / Impeccable)
+.impeccable/

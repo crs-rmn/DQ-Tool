@@ -1,0 +1,44 @@
+# Transparente Gewichtung für Prioritätsscore und Qualitätsscore.
+# Alle Werte sind nach dem Hackathon änderbar, ohne Code zu bearbeiten.
+
+# Priority-Score pro Befund (0-100)
+priority:
+  severity:        40   # Schwere der Regel (jede Regel bringt severity_base mit)
+  business_impact: 30   # Geschäftliche Auswirkung (siehe business_impact unten)
+  affected_rows:   15   # Anteil betroffener Datensätze
+  dependencies:    15   # Folgefehler und Abhängigkeiten
+  thresholds:
+    high: 70
+    medium: 40
+
+# Business-Impact pro Fachbereich / Regelkategorie (0-10)
+business_impact:
+  Vollstaendigkeit_SAP:        9
+  Vollstaendigkeit_HS:         5
+  Vollstaendigkeit_SF:         7
+  Vollstaendigkeit_SF_Service: 8
+  Eindeutigkeit:               9
+  Validitaet_Preis:            9
+  Validitaet_Status:           6
+  Validitaet_Datum:            6
+  Validitaet_Allgemein:        4
+  Konsistenz_Produkt:          8
+  Konsistenz_Preis:           10
+  Referenz:                    9
+  Anomalie_Preis:              7
+  Anomalie_Allgemein:          3
+
+# Quality-Score (0-100) - pro Dimension summiert, dann normiert.
+# Jede Dimension zieht Punkte pro kritischem Befund ab (gewichtet).
+quality_score:
+  dimensions:
+    Vollstaendigkeit: 25
+    Validitaet:       20
+    Eindeutigkeit:    20
+    Konsistenz:       20
+    Referenz:         15
+  severity_penalty:
+    hoch:    1.0
+    mittel:  0.4
+    niedrig: 0.1
+  min_records_for_score: 5  # unter diesem Schwellenwert: "Keine ausreichende Datenbasis"

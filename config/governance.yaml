@@ -1,0 +1,115 @@
+# Governance-Konfiguration für den AgroTechNova Data Quality Copilot
+# Diese Datei ist fachlich konfigurierbar. Alle hier festgelegten Regeln
+# gelten als "Governance-Entscheidung" und sind in der UI sichtbar.
+
+# Führende Systeme pro Datenbereich
+# Werte: SAP | Salesforce | HubSpot | Governance_Entscheidung_erforderlich
+leading_systems:
+  Materialnummer:        SAP
+  Materialbezeichnung:   SAP
+  Materialgruppe:        SAP
+  Mengeneinheit:         SAP
+  Produktstatus:         Governance_Entscheidung_erforderlich
+  Listenpreis:           Governance_Entscheidung_erforderlich
+  Kundenstamm:           Salesforce
+  Ansprechpartner:       Salesforce
+  Installierte_Geraete:  Salesforce
+  Wartungsauftraege:     Salesforce
+
+# Pflichtfelder pro Objekt (Spaltennamen nach Normalisierung)
+mandatory_fields:
+  SAP_FERT:   [MATNR, MAKTX, MTART, MEINS, WERKS]
+  SAP_ERSA:   [MATNR, MAKTX, MTART, MEINS, WERKS]
+  SAP_MARA:   [MATNR, MAKTX, MTART, MEINS]
+  HS_Products:         [hs_object_id, name, hs_sku, hs_status, price]
+  HS_PriceBookItems:   [hs_object_id, price_book_id, hs_associated_product_id, hs_price_eur]
+  SF_Product2:         [Id, Name, ProductCode, IsActive]
+  SF_PricebookEntry:   [Id, Pricebook2Id, Product2Id, UnitPrice, CurrencyIsoCode]
+  SF_Account:          [Id, Name, BillingCountry]
+  SF_Contact:          [Id, AccountId, LastName, Email]
+  SF_Asset:            [Id, Name, AccountId, Product2Id, SerialNumber, Status]
+  SF_WorkOrder:        [Id, WorkOrderNumber, AccountId, AssetId, Status, StartDate]
+
+# Zulässige Statuswerte (nach Normalisierung in Grossbuchstaben verglichen)
+allowed_values:
+  HS_product_status:    [ACTIVE, INACTIVE, ARCHIVED, DISCONTINUED]
+  HS_pricing_model:     [FLAT, TIERED, VOLUME, RECURRING]
+  HS_product_type:      [INVENTORY, SERVICE, DIGITAL]
+  SF_Asset_status:      [INSTALLED, SHIPPED, ORDERED, RETURNED, OBSOLETE]
+  SF_WorkOrder_status:  [NEW, IN PROGRESS, ON HOLD, COMPLETED, CANCELED, CANCELLED]
+  SF_WorkOrder_priority: [LOW, MEDIUM, HIGH, CRITICAL]
+  SAP_MMSTA:            ["01", "02", "03", "04", "99", ""]
+  SAP_MTART:            [FERT, ERSA, HALB, ROH]
+
+# Zulässige Währungen
+allowed_currencies: [EUR, USD, GBP]
+
+# Zulässige Mengeneinheiten
+allowed_units: [ST, STK, KG, L, M, M2, M3, PC]
+
+# Bekannte sichere Alias-Korrekturen (ALT -> NEU). Case-insensitiv geprüft.
+# Werden als "Sichere_Korrektur" in der Befundliste vorgeschlagen.
+value_aliases:
+  HS_product_status:
+    ACTIVE: ACTIVE
+    AKTIV: ACTIVE
+    INACTIVE: INACTIVE
+    INAKTIV: INACTIVE
+    ARCHIVED: ARCHIVED
+    DISCONTINUED: DISCONTINUED
+  HS_pricing_model:
+    FLAT: FLAT
+    FLATT: FLAT
+    TIERED: TIERED
+    VOLUME: VOLUME
+    RECURRING: RECURRING
+  SF_Asset_status:
+    INSTALLED: INSTALLED
+    SHIPPED: SHIPPED
+    ORDERED: ORDERED
+    RETURNED: RETURNED
+    OBSOLETE: OBSOLETE
+    ACTIVE: INSTALLED           # 'Active' / 'Aktiv' werden als INSTALLED interpretiert
+    AKTIV: INSTALLED
+    REGISTERED: INSTALLED
+  SF_WorkOrder_status:
+    NEW: NEW
+    OPEN: NEW
+    IN PROGRESS: IN PROGRESS
+    ON HOLD: ON HOLD
+    COMPLETED: COMPLETED
+    ABGESCHLOSSEN: COMPLETED
+    CLOSED: COMPLETED
+    CANCELED: CANCELED
+    CANCELLED: CANCELLED
+    CANNOT COMPLETE: CANCELED
+  SF_WorkOrder_priority:
+    LOW: LOW
+    MEDIUM: MEDIUM
+    HIGH: HIGH
+    HOCH: HIGH
+    CRITICAL: CRITICAL
+    URGENT: CRITICAL
+
+# Erlaubter Datumsbereich (um offensichtlich falsche Daten wie 2028 zu erkennen,
+# wenn der Datensatz aus 2024 stammt). "today_offset_years" zählt vom Analysedatum.
+date_range:
+  min_year: 2000
+  max_future_years: 1   # Datum darf höchstens so viele Jahre in der Zukunft liegen
+
+# Verantwortlichkeiten pro Regelkategorie
+responsibilities:
+  Vollstaendigkeit_SAP:    Stammdatenmanagement
+  Vollstaendigkeit_HS:     Marketing
+  Vollstaendigkeit_SF:     Vertrieb
+  Vollstaendigkeit_SF_Service: Service
+  Eindeutigkeit:           Stammdatenmanagement
+  Validitaet_Preis:        Vertrieb
+  Validitaet_Status:       Produktmanagement
+  Validitaet_Datum:        Service
+  Validitaet_Allgemein:    Stammdatenmanagement
+  Konsistenz_Produkt:      Produktmanagement
+  Konsistenz_Preis:        Vertrieb
+  Referenz:                Service
+  Anomalie_Preis:          Controlling
+  Anomalie_Allgemein:      Data_Governance
