@@ -5,10 +5,78 @@ from statistics import median
 from typing import Iterable
 
 from ..config import Config
-from ..finding import Finding, DIM_ANOMALY, SEVERITY_MEDIUM
+from ..finding import Finding, DIM_ANOMALY, SEVERITY_MEDIUM, SEVERITY_LOW
 from ..loader import DataPackage
 from ..normalize import is_missing, norm_matnr, norm_price, strip_str
 from .base import registry
+
+
+@registry.register(
+    rule_id="ANOMALY_BELOW_COST",
+    name="Preis unter Herstellkosten (HubSpot)",
+    description="HubSpot-Produkte, deren Verkaufspreis unter den hinterlegten Herstellkosten liegt.",
+    category="Anomalie_Preis",
+    dimension=DIM_ANOMALY,
+    default_severity="mittel",
+)
+def rule_below_cost(pkg: DataPackage, cfg: Config) -> Iterable[Finding]:
+    """Verlustverkauf-Verdacht: Preis < Herstellkosten.
+
+    Adressiert die Controlling-Stimme (Felix Brenner). Ob echter Verlust oder Datenfehler,
+    muss das Controlling klären - deshalb mittel + manuelle Prüfung, kein behaupteter Schaden.
+    """
+    hs = pkg.get("HS_Products")
+    if hs is None:
+        return
+    cols = hs.df.columns
+    if "price" not in cols or "hs_cost_of_goods_sold" not in cols:
+        return
+    for i, row in enumerate(hs.df.itertuples(index=False)):
+        d = row._asdict()
+        p = norm_price(d.get("price"))
+        c = norm_price(d.get("hs_cost_of_goods_sold"))
+        if p is None or c is None or p <= 0 or c <= 0 or p >= c:
+            continue
+        loss = c - p
+        ratio = c / p
+        # Faktor >= 10 deutet eher auf Erfassungsfehler als auf echten Verlust hin
+        likely_error = ratio >= 10
+        matnr = norm_matnr(d.get("atn_sap_materialnummer"))
+        name = strip_str(d.get("name")) or ""
+        yield Finding(
+            rule_id="ANOM_BELOW_COST",
+            rule_name="Preis unter Herstellkosten",
+            category="Anomalie_Preis",
+            dimension=DIM_ANOMALY,
+            system=hs.system,
+            file=hs.source_file,
+            sheet=hs.sheet_name,
+            row=hs.excel_row(i),
+            field_name="price",
+            value=d.get("price"),
+            record_id=matnr or strip_str(d.get("hs_object_id")),
+            message=(f"Preis {p:,.0f} € liegt unter den Herstellkosten {c:,.0f} € "
+                     f"(Differenz {loss:,.0f} €/Stück){' - Faktor ≥ 10, eher Datenfehler' if likely_error else ''}."
+                     .replace(",", ".")),
+            severity=SEVERITY_LOW if likely_error else SEVERITY_MEDIUM,
+            explanation=(
+                f"Für '{name}' ist in HubSpot ein Verkaufspreis hinterlegt, der unter den "
+                "ebenfalls dort gepflegten Herstellkosten liegt. Das kann ein echter Verlustverkauf "
+                "oder ein Pflegefehler bei Preis oder Kosten sein."
+            ),
+            business_impact=(
+                "Wenn der Preis stimmt, wird mit Verlust verkauft. Wenn die Kosten stimmen, ist der "
+                "Katalogpreis zu niedrig. Beides verzerrt die Deckungsbeitrags-Betrachtung im Controlling."
+            ),
+            cause="Preis oder Herstellkosten in HubSpot falsch gepflegt, oder bewusst subventionierter Preis.",
+            correction_suggestion=(
+                "Controlling prüft Preis und Herstellkosten gegen die Kalkulation. "
+                "Herstellkosten stehen nur in HubSpot und sind nicht gegen SAP gegengeprüft."
+            ),
+            correction_type="Manuelle_Pruefung",
+            confidence="wahrscheinlich",
+            tags=["verlustverkauf", "controlling"],
+        )
 
 
 @registry.register(

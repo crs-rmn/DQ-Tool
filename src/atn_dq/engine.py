@@ -92,55 +92,65 @@ def _attach_region(findings: Iterable[Finding], pkg: DataPackage) -> None:
             f.region = f.region or "Nicht zugeordnet"
 
 
+def _col(df, name):
+    """Spalte als Liste oder leere Liste (vektorfreundlich, ohne iterrows)."""
+    return df[name].tolist() if name in df.columns else []
+
+
 def _account_country_map(pkg: DataPackage) -> dict[str, str]:
+    from .normalize import norm_country
     acc = pkg.get("SF_Account")
     out: dict[str, str] = {}
     if acc is None:
         return out
-    for _, row in acc.df.iterrows():
-        aid = strip_str(row.get("Id"))
-        country = strip_str(row.get("BillingCountry"))
+    ids = _col(acc.df, "Id")
+    countries = _col(acc.df, "BillingCountry")
+    for aid, country in zip(ids, countries):
+        aid = strip_str(aid); country = strip_str(country)
         if aid and country:
-            from .normalize import norm_country
             out[aid] = norm_country(country) or country
     return out
 
 
 def _asset_country_map(pkg: DataPackage, account_country: dict[str, str]) -> dict[str, str]:
+    from .normalize import norm_country
     assets = pkg.get("SF_Asset")
     out: dict[str, str] = {}
     if assets is None:
         return out
-    for _, row in assets.df.iterrows():
-        aid = strip_str(row.get("Id"))
+    n = len(assets.df)
+    ids = _col(assets.df, "Id") or [None] * n
+    lands = _col(assets.df, "REF_Land") or [None] * n
+    accs = _col(assets.df, "AccountId") or [None] * n
+    for aid, land, acc in zip(ids, lands, accs):
+        aid = strip_str(aid)
         if not aid:
             continue
-        country = strip_str(row.get("REF_Land"))
-        if not country:
-            acc = strip_str(row.get("AccountId"))
-            country = account_country.get(acc or "")
+        country = strip_str(land) or account_country.get(strip_str(acc) or "")
         if country:
-            from .normalize import norm_country
             out[aid] = norm_country(country) or country
     return out
 
 
 def _workorder_country_map(pkg: DataPackage, asset_country, account_country) -> dict[str, str]:
+    from .normalize import norm_country
     wo = pkg.get("SF_WorkOrder")
     out: dict[str, str] = {}
     if wo is None:
         return out
-    for _, row in wo.df.iterrows():
-        rid = strip_str(row.get("WorkOrderNumber"))
+    n = len(wo.df)
+    rids = _col(wo.df, "WorkOrderNumber") or [None] * n
+    lands = _col(wo.df, "REF_Land") or [None] * n
+    assetids = _col(wo.df, "AssetId") or [None] * n
+    accs = _col(wo.df, "AccountId") or [None] * n
+    for rid, land, assetid, acc in zip(rids, lands, assetids, accs):
+        rid = strip_str(rid)
         if not rid:
             continue
-        country = strip_str(row.get("REF_Land"))
-        if not country:
-            country = asset_country.get(strip_str(row.get("AssetId")) or "")
-        if not country:
-            country = account_country.get(strip_str(row.get("AccountId")) or "")
+        country = (strip_str(land)
+                   or asset_country.get(strip_str(assetid) or "")
+                   or account_country.get(strip_str(acc) or ""))
         if country:
-            from .normalize import norm_country
             out[rid] = norm_country(country) or country
     return out
 
@@ -153,9 +163,9 @@ def _product_country_map(pkg: DataPackage) -> dict[str, str]:
         sheet = pkg.get(key)
         if sheet is None or "HERKL" not in sheet.df.columns or "MATNR" not in sheet.df.columns:
             continue
-        for _, row in sheet.df.iterrows():
-            m = norm_matnr(row["MATNR"])
-            herkl = strip_str(row.get("HERKL"))
+        for matnr, herkl in zip(sheet.df["MATNR"].tolist(), sheet.df["HERKL"].tolist()):
+            m = norm_matnr(matnr)
+            herkl = strip_str(herkl)
             if m and herkl:
                 out[m] = ISO3166_ALIAS.get(herkl.upper(), herkl)
     return out

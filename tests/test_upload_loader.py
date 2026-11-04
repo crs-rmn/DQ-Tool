@@ -20,8 +20,9 @@ def test_load_bytes_equivalent_to_load_file():
 
 
 def test_load_package_merges_folder_and_uploads(tmp_path):
-    # tmp_path leer, uploads simulieren vollständige Datei
-    sample = next(p for p in INPUT_DIR.glob("AgroTechNova_Stammdaten_SAP-MARC_*.xlsx")
+    # tmp_path leer, uploads simulieren vollständige Datei.
+    # Dateiname-Muster deckt alte (SAP-MARC) und neue (MARC) Benennung ab.
+    sample = next(p for p in INPUT_DIR.glob("*Stammdaten*MARC*.xlsx")
                   if not p.name.startswith("~$"))
     pkg = load_package(
         input_dir=tmp_path,

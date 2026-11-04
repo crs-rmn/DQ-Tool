@@ -64,6 +64,7 @@ def test_rule_registry_has_expected_rules():
     expected = {
         "COMPLETENESS_MANDATORY",
         "UNIQUENESS_KEYS",
+        "UNIQUENESS_ACCOUNT_NAME",
         "VALIDITY_STATUS",
         "VALIDITY_PRICE",
         "CONSISTENCY_SAP_MATNR_IN_CRM",
@@ -74,5 +75,37 @@ def test_rule_registry_has_expected_rules():
         "REFERENCE_WORKORDER_ASSET",
         "TEMPORAL_DATE_RANGE",
         "ANOMALY_PRICE_OUTLIER",
+        "ANOMALY_BELOW_COST",
     }
     assert expected.issubset(rule_ids), f"Fehlend: {expected - rule_ids}"
+
+
+def test_account_name_duplicates_detected(pkg, cfg):
+    """Kunden-Dubletten nach Name schließen die Customer-Success-Lücke."""
+    result = run_analysis(pkg, cfg)
+    dupes = [f for f in result.findings if f.rule_id == "UNIQUE_SF_Account_Name"]
+    assert len(dupes) > 0, "Erwartet mindestens eine mögliche Kunden-Dublette"
+    assert all(f.dimension == DIM_UNIQUENESS for f in dupes)
+
+
+def test_below_cost_rule_produces_findings(pkg, cfg):
+    """Verlustverkäufe (Preis < Herstellkosten) erscheinen als Befund."""
+    result = run_analysis(pkg, cfg)
+    below = [f for f in result.findings if f.rule_id == "ANOM_BELOW_COST"]
+    assert len(below) > 0
+    assert all(f.category == "Anomalie_Preis" for f in below)
+
+
+def test_normalization_noise_is_aggregated(pkg, cfg):
+    """Reine Schreibweise-/Alias-Massen werden zu Sammelbefunden gebündelt."""
+    result = run_analysis(pkg, cfg)
+    agg = [f for f in result.findings if f.rule_id.endswith("_AGG")]
+    assert len(agg) > 0, "Erwartet mindestens einen Sammelbefund"
+    # Einzelne reine Case-Befunde dürfen es nur noch in kleiner Zahl geben,
+    # nicht mehr zehntausende (sonst greift die Bündelung nicht).
+    per_row_case = [f for f in result.findings if f.rule_id.endswith("_CASE")]
+    assert len(per_row_case) < 1000, f"Zu viele Einzel-Case-Befunde: {len(per_row_case)}"
+    # Sammelbefunde tragen die Anzahl im Tag und sind niedrige Schwere.
+    for f in agg:
+        assert f.severity == "niedrig"
+        assert any(t.startswith("betrifft_") for t in f.tags)

@@ -71,11 +71,82 @@ EMAIL_FIELDS = [
 
 EMAIL_RX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# Ab wie vielen gleichartigen Normierungs-Treffern pro Spalte wird zu EINEM
+# Sammelbefund zusammengefasst, statt zehntausende Einzelzeilen zu melden.
+# (Reine Schreibweise-/Alias-Abweichungen - fachlich eine Spalten-Konvention,
+#  kein Fehler je Zeile.)
+AGG_THRESHOLD = 50
+
+
+def _record_ids_for(sheet: LoadedSheet) -> list:
+    """Record-IDs der ganzen Tabelle in einem Rutsch (schnell, ohne iloc je Zeile)."""
+    for cand in ("MATNR", "Id", "hs_object_id", "WorkOrderNumber", "SerialNumber"):
+        if cand in sheet.df.columns:
+            col = sheet.df[cand]
+            return [None if is_missing(v) else str(v).strip() for v in col]
+    return [None] * len(sheet.df)
+
+
+def _aggregate_finding(sheet: LoadedSheet, field_name: str, cat: str, label: str,
+                       items: list[tuple[int, object, str]], total: int) -> Finding:
+    """Ein Sammelbefund für eine ganze, systematisch betroffene Spalte."""
+    examples = ", ".join(f"'{r}' → '{t}'" for _, r, t in items[:3])
+    first_idx = items[0][0]
+    n = len(items)
+    return Finding(
+        rule_id=f"VALID_{sheet.key}_{field_name}_{label}_AGG",
+        rule_name=f"Spalten-Normierung '{field_name}' ({n} Werte, Sammelbefund)",
+        category=cat,
+        dimension=DIM_VALIDITY,
+        system=sheet.system,
+        file=sheet.source_file,
+        sheet=sheet.sheet_name,
+        row=sheet.excel_row(int(first_idx)),
+        field_name=field_name,
+        value=None,
+        record_id=None,
+        message=(f"{n} von {total} Werten im Feld '{field_name}' sind nur anders geschrieben "
+                 f"(z. B. {examples}). Als EIN Sammelbefund zusammengefasst - einmalige Spalten-Normierung behebt alle."),
+        severity=SEVERITY_LOW,
+        explanation=(f"{n} Datensätze sind betroffen - das betrifft praktisch die ganze Spalte und deutet "
+                     f"auf eine Schreibkonvention des Quellsystems hin, nicht auf {n} unabhängige Einzelfehler."),
+        business_impact=("Erschwert maschinelle Vergleiche und Filter. Betrifft so viele Zeilen, dass eine "
+                         "einmalige Normierung im Import-Prozess sinnvoller ist als Einzelkorrekturen."),
+        cause="Das Quellsystem erfasst diese Spalte in abweichender Schreibweise/Benennung.",
+        correction_suggestion=(f"Spalte '{field_name}' einmalig per Mapping normieren (z. B. im Import). "
+                               "Details je Zeile sind über die Normierungsregel reproduzierbar."),
+        correction_type="Sichere_Korrektur",
+        confidence="sicher",
+        tags=["sammelbefund", f"betrifft_{n}"],
+    )
+
+
+def _emit_normalization(sheet, field_name, cat, label, rule_suffix, items, total,
+                        msg_fn, expl, impact, cause, corr_fn) -> Iterable[Finding]:
+    """Entweder 1 Sammelbefund (viele Treffer) oder Einzelbefunde (wenige)."""
+    if not items:
+        return
+    if len(items) > AGG_THRESHOLD:
+        yield _aggregate_finding(sheet, field_name, cat, label, items, total)
+        return
+    ids = _record_ids_for(sheet)
+    for idx, raw, target in items:
+        yield Finding(
+            rule_id=f"VALID_{sheet.key}_{field_name}_{rule_suffix}",
+            rule_name=f"{label} in '{field_name}'",
+            category=cat, dimension=DIM_VALIDITY, system=sheet.system,
+            file=sheet.source_file, sheet=sheet.sheet_name, row=sheet.excel_row(int(idx)),
+            field_name=field_name, value=raw, record_id=ids[idx] if idx < len(ids) else None,
+            message=msg_fn(raw, target), severity=SEVERITY_LOW, explanation=expl,
+            business_impact=impact, cause=cause, correction_suggestion=corr_fn(raw, target),
+            correction_type="Sichere_Korrektur", confidence="sicher",
+        )
+
 
 @registry.register(
     rule_id="VALIDITY_STATUS",
     name="Zulässige Status-/Typwerte",
-    description="Prüft, ob Statuswerte zur konfigurierten Wertemenge gehören.",
+    description="Prüft, ob Statuswerte zur konfigurierten Wertemenge gehören. Reine Schreibweise-/Alias-Abweichungen werden pro Spalte zu einem Sammelbefund gebündelt.",
     category="Validitaet_Status",
     dimension=DIM_VALIDITY,
 )
@@ -91,96 +162,57 @@ def rule_status(pkg: DataPackage, cfg: Config) -> Iterable[Finding]:
             continue
         alias_map = {k.upper(): v for k, v in aliases.get(key_in_cfg, {}).items()}
         col = sheet.df[field_name]
+        total = int(col.map(lambda v: not is_missing(v)).sum())
+        case_items: list[tuple[int, object, str]] = []
+        alias_items: list[tuple[int, object, str]] = []
+        invalid_items: list[tuple[int, object]] = []
         for i, raw in col.items():
             if is_missing(raw):
                 continue
             up = norm_upper(raw)
-            if up in allowed_set and str(raw).strip() == up:
-                continue  # exakt korrekt
             if up in allowed_set:
-                # nur Case-Issue: niedrig und sichere Korrektur
-                yield Finding(
-                    rule_id=f"VALID_{sheet_key}_{field_name}_CASE",
-                    rule_name=f"Groß-/Kleinschreibung in '{field_name}'",
-                    category=cat,
-                    dimension=DIM_VALIDITY,
-                    system=sheet.system,
-                    file=sheet.source_file,
-                    sheet=sheet.sheet_name,
-                    row=sheet.excel_row(int(i)),
-                    field_name=field_name,
-                    value=raw,
-                    record_id=_record_id(sheet, int(i)),
-                    message=f"Wert '{raw}' entspricht dem Standard, ist aber nicht normiert ({up}).",
-                    severity=SEVERITY_LOW,
-                    explanation="Der Wert ist zulässig, aber in abweichender Groß-/Kleinschreibung erfasst.",
-                    business_impact=(
-                        "Erschwert maschinelle Vergleiche und kann zu doppelten Buckets in Reports führen."
-                    ),
-                    cause="Manuelle Eingabe ohne Normierung.",
-                    correction_suggestion=f"Wert auf '{up}' normieren.",
-                    correction_type="Sichere_Korrektur",
-                    confidence="sicher",
-                )
+                if str(raw).strip() != up:            # nur Groß-/Kleinschreibung
+                    case_items.append((int(i), raw, up))
                 continue
-            if up in alias_map:
-                target = alias_map[up]
-                yield Finding(
-                    rule_id=f"VALID_{sheet_key}_{field_name}_ALIAS",
-                    rule_name=f"Alias-Wert in '{field_name}'",
-                    category=cat,
-                    dimension=DIM_VALIDITY,
-                    system=sheet.system,
-                    file=sheet.source_file,
-                    sheet=sheet.sheet_name,
-                    row=sheet.excel_row(int(i)),
-                    field_name=field_name,
-                    value=raw,
-                    record_id=_record_id(sheet, int(i)),
-                    message=f"Wert '{raw}' ist bekannt als Alias von '{target}'.",
-                    severity=SEVERITY_LOW,
-                    explanation=(
-                        f"Der Wert '{raw}' wird laut Governance-Alias-Tabelle als '{target}' interpretiert. "
-                        "Für saubere Reports sollte der Standardwert eingetragen werden."
-                    ),
-                    business_impact="Berichte und Filter zeigen den Wert ggf. doppelt.",
-                    cause="Fach- oder lokalsprachliche Erfassung ohne Normierung.",
-                    correction_suggestion=f"Wert auf '{target}' standardisieren.",
-                    correction_type="Sichere_Korrektur",
-                    confidence="sicher",
-                )
+            if up in alias_map:                        # bekannter Alias
+                alias_items.append((int(i), raw, alias_map[up]))
                 continue
-            severity = SEVERITY_MEDIUM
-            if field_name in ("hs_status", "Status", "MMSTA"):
-                severity = SEVERITY_HIGH
+            invalid_items.append((int(i), raw))        # echter unbekannter Wert
+
+        yield from _emit_normalization(
+            sheet, field_name, cat, "Groß-/Kleinschreibung", "CASE", case_items, total,
+            msg_fn=lambda r, t: f"Wert '{r}' entspricht dem Standard, ist aber nicht normiert ({t}).",
+            expl="Der Wert ist zulässig, aber in abweichender Groß-/Kleinschreibung erfasst.",
+            impact="Erschwert maschinelle Vergleiche und kann zu doppelten Buckets in Reports führen.",
+            cause="Manuelle Eingabe ohne Normierung.",
+            corr_fn=lambda r, t: f"Wert auf '{t}' normieren.")
+        yield from _emit_normalization(
+            sheet, field_name, cat, "Alias-Wert", "ALIAS", alias_items, total,
+            msg_fn=lambda r, t: f"Wert '{r}' ist bekannt als Alias von '{t}'.",
+            expl="Der Wert wird laut Governance-Alias-Tabelle als Standardwert interpretiert.",
+            impact="Berichte und Filter zeigen den Wert ggf. doppelt.",
+            cause="Fach- oder lokalsprachliche Erfassung ohne Normierung.",
+            corr_fn=lambda r, t: f"Wert auf '{t}' standardisieren.")
+
+        # echte unbekannte Werte bleiben als Einzelbefunde (brauchen fachliche Prüfung)
+        ids = _record_ids_for(sheet) if invalid_items else []
+        severity = SEVERITY_HIGH if field_name in ("hs_status", "Status", "MMSTA") else SEVERITY_MEDIUM
+        for idx, raw in invalid_items:
             yield Finding(
                 rule_id=f"VALID_{sheet_key}_{field_name}",
                 rule_name=f"Ungültiger Wert in '{field_name}'",
-                category=cat,
-                dimension=DIM_VALIDITY,
-                system=sheet.system,
-                file=sheet.source_file,
-                sheet=sheet.sheet_name,
-                row=sheet.excel_row(int(i)),
-                field_name=field_name,
-                value=raw,
-                record_id=_record_id(sheet, int(i)),
+                category=cat, dimension=DIM_VALIDITY, system=sheet.system,
+                file=sheet.source_file, sheet=sheet.sheet_name, row=sheet.excel_row(int(idx)),
+                field_name=field_name, value=raw, record_id=ids[idx] if idx < len(ids) else None,
                 message=f"Wert '{raw}' ist für Feld '{field_name}' nicht zulässig.",
                 severity=severity,
-                explanation=(
-                    f"Der Wert '{raw}' entspricht weder der Standardliste {sorted(allowed_set)} "
-                    "noch einem bekannten Alias. Tippfehler oder nicht gepflegte Werte wahrscheinlich."
-                ),
-                business_impact=(
-                    "Ungültige Status können dazu führen, dass Produkte fälschlich "
-                    "ausgeblendet oder weiterhin angeboten werden."
-                ),
+                explanation=(f"Der Wert '{raw}' entspricht weder der Standardliste {sorted(allowed_set)} "
+                             "noch einem bekannten Alias. Tippfehler oder nicht gepflegte Werte wahrscheinlich."),
+                business_impact=("Ungültige Status können dazu führen, dass Produkte fälschlich "
+                                 "ausgeblendet oder weiterhin angeboten werden."),
                 cause="Manuelle Eingabe ohne Validierung oder nicht gepflegte Mapping-Regel.",
-                correction_suggestion=(
-                    f"Wert fachlich prüfen und auf einen der zulässigen Werte korrigieren: {sorted(allowed_set)}."
-                ),
-                correction_type="Manuelle_Pruefung",
-                confidence="wahrscheinlich",
+                correction_suggestion=(f"Wert fachlich prüfen und auf einen der zulässigen Werte korrigieren: {sorted(allowed_set)}."),
+                correction_type="Manuelle_Pruefung", confidence="wahrscheinlich",
             )
 
 
@@ -313,42 +345,46 @@ def rule_unit(pkg: DataPackage, cfg: Config) -> Iterable[Finding]:
         sheet = pkg.get(sheet_key)
         if sheet is None or field_name not in sheet.df.columns:
             continue
-        for i, raw in sheet.df[field_name].items():
+        col = sheet.df[field_name]
+        total = int(col.map(lambda v: not is_missing(v)).sum())
+        known_items: list[tuple[int, object, str]] = []   # bekannter Alias -> aggregierbar
+        unknown_items: list[tuple[int, object]] = []       # unbekannt -> Einzelbefund
+        for i, raw in col.items():
             if is_missing(raw):
                 continue
             up = norm_upper(raw)
-            if up not in allowed:
-                suggestion = aliases.get(up)
-                yield Finding(
-                    rule_id=f"VALID_UNIT_{sheet.key}_{field_name}",
-                    rule_name="Ungültige Mengeneinheit",
-                    category="Validitaet_Allgemein",
-                    dimension=DIM_VALIDITY,
-                    system=sheet.system,
-                    file=sheet.source_file,
-                    sheet=sheet.sheet_name,
-                    row=sheet.excel_row(int(i)),
-                    field_name=field_name,
-                    value=raw,
-                    record_id=_record_id(sheet, int(i)),
-                    message=f"Mengeneinheit '{raw}' ist nicht standardisiert.",
-                    severity=SEVERITY_LOW,
-                    explanation=(
-                        "Abweichende Einheiten erschweren den Vergleich zwischen Systemen. "
-                        f"Erwartet: {sorted(allowed)}."
-                    ),
-                    business_impact=(
-                        "Fehlerhafte Lagerbestände oder Preisberechnungen bei systemübergreifendem "
-                        "Vergleich möglich."
-                    ),
-                    cause="Fach- oder Lokalsprachliche Erfassung ohne Einheiten-Mapping.",
-                    correction_suggestion=(
-                        f"Auf '{suggestion}' standardisieren." if suggestion
-                        else f"Auf eine der Standardeinheiten mappen: {sorted(allowed)}."
-                    ),
-                    correction_type="Sichere_Korrektur" if suggestion else "Vorschlag",
-                    confidence="sicher" if suggestion else "wahrscheinlich",
-                )
+            if up in allowed:
+                continue
+            suggestion = aliases.get(up)
+            if suggestion:
+                known_items.append((int(i), raw, suggestion))
+            else:
+                unknown_items.append((int(i), raw))
+
+        yield from _emit_normalization(
+            sheet, field_name, "Validitaet_Allgemein", "Mengeneinheit", "UNIT", known_items, total,
+            msg_fn=lambda r, t: f"Mengeneinheit '{r}' ist nicht standardisiert (→ '{t}').",
+            expl=f"Abweichende Einheiten erschweren den Vergleich zwischen Systemen. Erwartet: {sorted(allowed)}.",
+            impact="Fehlerhafte Lagerbestände oder Preisberechnungen bei systemübergreifendem Vergleich möglich.",
+            cause="Fach- oder Lokalsprachliche Erfassung ohne Einheiten-Mapping.",
+            corr_fn=lambda r, t: f"Auf '{t}' standardisieren.")
+
+        ids = _record_ids_for(sheet) if unknown_items else []
+        for idx, raw in unknown_items:
+            yield Finding(
+                rule_id=f"VALID_UNIT_{sheet.key}_{field_name}",
+                rule_name="Ungültige Mengeneinheit",
+                category="Validitaet_Allgemein", dimension=DIM_VALIDITY, system=sheet.system,
+                file=sheet.source_file, sheet=sheet.sheet_name, row=sheet.excel_row(int(idx)),
+                field_name=field_name, value=raw, record_id=ids[idx] if idx < len(ids) else None,
+                message=f"Mengeneinheit '{raw}' ist nicht standardisiert.",
+                severity=SEVERITY_LOW,
+                explanation=f"Abweichende Einheiten erschweren den Vergleich zwischen Systemen. Erwartet: {sorted(allowed)}.",
+                business_impact="Fehlerhafte Lagerbestände oder Preisberechnungen bei systemübergreifendem Vergleich möglich.",
+                cause="Fach- oder Lokalsprachliche Erfassung ohne Einheiten-Mapping.",
+                correction_suggestion=f"Auf eine der Standardeinheiten mappen: {sorted(allowed)}.",
+                correction_type="Vorschlag", confidence="wahrscheinlich",
+            )
 
 
 @registry.register(

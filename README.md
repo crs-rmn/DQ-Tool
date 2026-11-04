@@ -27,9 +27,13 @@ Beim ersten Start legt das Skript eine virtuelle Umgebung an und installiert die
 
 ## Abgabe: Befundliste
 
-Seite **Befunde** → „CSV exportieren“ oder „Excel exportieren“. Eine Zeile je Befund; die ersten Spalten sind
+Seite **Befunde** → Umfang wählen (**Nur Hoch + Mittel** empfohlen für die Abgabe, **Nur Hoch** oder **Alle Befunde**) → „CSV exportieren“ oder „Excel exportieren“. Eine Zeile je Befund; die ersten Spalten sind
 `Datei, Blatt, Zeile, Feld, Befund, Schweregrad (hoch/mittel/niedrig)`, danach Priorität, Region, Verantwortlicher, Korrekturvorschlag u. a.
 Die Rollen-Dashboards (Domain Expert) exportieren zusätzlich gefiltert nach Fachbereich und Thema.
+
+> **Hinweis zum Umfang:** Reine Schreibweise-/Alias-Abweichungen (z. B. „High“ statt „HIGH“), die oft eine ganze Spalte betreffen, werden zu **einem Sammelbefund je Spalte** gebündelt statt als zehntausende Einzelzeilen. Die „Hoch + Mittel“-Abgabe enthält damit die fachlich relevanten Befunde ohne Rauschen.
+
+Für Fachabteilungen liegt eine schrittweise, nicht-technische Anleitung in [`INSTALLATION.md`](INSTALLATION.md).
 
 ## Funktionen im Überblick
 

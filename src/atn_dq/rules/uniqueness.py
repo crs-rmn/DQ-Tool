@@ -6,7 +6,7 @@ from typing import Iterable
 from ..config import Config
 from ..finding import Finding, DIM_UNIQUENESS, SEVERITY_HIGH, SEVERITY_MEDIUM
 from ..loader import DataPackage, LoadedSheet
-from ..normalize import is_missing, norm_matnr, strip_str
+from ..normalize import is_missing, norm_matnr, norm_name, strip_str
 from .base import registry
 
 
@@ -131,3 +131,87 @@ def _display_value(df, fields: list[str], idx: int) -> str:
         v = df.iloc[idx][f]
         vals.append("" if is_missing(v) else str(v).strip())
     return "+".join(vals)
+
+
+@registry.register(
+    rule_id="UNIQUENESS_ACCOUNT_NAME",
+    name="Mögliche Kunden-Dubletten (gleicher Name)",
+    description=("Findet Accounts mit identischem Namen (schreibweisen-normalisiert). "
+                 "Die Account-Id ist systemgeneriert und immer eindeutig - doppelte Kunden "
+                 "erkennt man nur über Name/Ort."),
+    category="Eindeutigkeit",
+    dimension=DIM_UNIQUENESS,
+)
+def rule_duplicate_accounts(pkg: DataPackage, cfg: Config) -> Iterable[Finding]:
+    """Dublettenverdacht bei Kunden: gleicher normalisierter Name (optional + Ort/PLZ).
+
+    Adressiert die Stimme aus Customer Success ("manche Kunden gibt es mehrfach").
+    Severity mittel + manuelle Prüfung, weil ein gleicher Name selten auch legitim sein kann.
+    """
+    acc = pkg.get("SF_Account")
+    if acc is None or "Name" not in acc.df.columns:
+        return
+    df = acc.df
+    has_city = "BillingCity" in df.columns
+
+    # Normierten Schlüssel je Zeile bilden (Name, optional + Ort)
+    keys: list[str | None] = []
+    for i in range(len(df)):
+        name = norm_name(df["Name"].iloc[i])
+        if not name:
+            keys.append(None)
+            continue
+        if has_city:
+            city = norm_name(df["BillingCity"].iloc[i]) or ""
+            keys.append(f"{name}|{city}")
+        else:
+            keys.append(name)
+
+    import pandas as pd
+    key_series = pd.Series(keys, index=df.index)
+    counts = key_series.value_counts(dropna=True)
+    dup_keys = set(counts[counts > 1].index)
+    if not dup_keys:
+        return
+
+    id_col = df["Id"] if "Id" in df.columns else None
+    for pos, (idx, key) in enumerate(key_series.items()):
+        if key is None or key not in dup_keys:
+            continue
+        name_raw = strip_str(df["Name"].iloc[pos]) or ""
+        city_raw = strip_str(df["BillingCity"].iloc[pos]) if has_city else None
+        n = int(counts[key])
+        where = f" in {city_raw}" if city_raw else ""
+        rec = strip_str(id_col.iloc[pos]) if id_col is not None else None
+        yield Finding(
+            rule_id="UNIQUE_SF_Account_Name",
+            rule_name="Mögliche Kunden-Dublette",
+            category="Eindeutigkeit",
+            dimension=DIM_UNIQUENESS,
+            system=acc.system,
+            file=acc.source_file,
+            sheet=acc.sheet_name,
+            row=acc.excel_row(int(pos)),
+            field_name="Name" + ("+BillingCity" if has_city else ""),
+            value=name_raw,
+            record_id=rec,
+            message=f"Kunde '{name_raw}'{where} kommt {n}-mal vor (gleicher Name).",
+            severity=SEVERITY_MEDIUM,
+            explanation=(
+                "Mehrere Accounts tragen denselben Namen (schreibweisen-unabhängig). "
+                "Da die Account-Id systemseitig immer eindeutig ist, bleiben solche Dubletten "
+                "sonst unentdeckt - der Kunde existiert dann faktisch mehrfach."
+            ),
+            business_impact=(
+                "Kunden erhalten Post doppelt oder gar nicht, Umsätze verteilen sich auf mehrere "
+                "Datensätze und Marktberichte zeigen ein falsches Bild."
+            ),
+            cause="Kunde wurde mehrfach angelegt (z. B. durch unterschiedliche Erfassende/Importe).",
+            correction_suggestion=(
+                "Datensätze fachlich prüfen und zu einem Golden Record zusammenführen. "
+                "Vor dem Zusammenführen Adressen und Ansprechpartner abgleichen."
+            ),
+            correction_type="Manuelle_Pruefung",
+            confidence="wahrscheinlich",
+            tags=["dublette", "kunde"],
+        )

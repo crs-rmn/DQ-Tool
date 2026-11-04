@@ -699,19 +699,34 @@ elif page == "Befunde":
                     st.caption(f"[{g['Priorität']}] {g['Befund'][:100]}")
 
     st.divider()
+    st.markdown("#### Befundliste exportieren (Abgabe)")
+    scope = st.radio(
+        "Umfang",
+        ["Nur Hoch + Mittel (empfohlen für die Abgabe)", "Nur Hoch", "Alle Befunde"],
+        horizontal=True,
+        help=("Die vollständige Liste enthält auch tausende reine Schreibweise-Hinweise. "
+              "Für die Jury-Abgabe ist 'Hoch + Mittel' meist die bessere Wahl."),
+    )
+    if scope.startswith("Nur Hoch +"):
+        export_set = [f for f in findings if f.severity in ("hoch", "mittel")]; tag = "hoch_mittel"
+    elif scope == "Nur Hoch":
+        export_set = [f for f in findings if f.severity == "hoch"]; tag = "hoch"
+    else:
+        export_set = findings; tag = "alle"
+    st.caption(f"{len(export_set):,} von {len(findings):,} Befunden im Export.".replace(",", "."))
     ex1, ex2 = st.columns(2)
     if ex1.button("CSV exportieren", use_container_width=True):
-        outp = ROOT / "data" / "exports" / "befunde.csv"
-        export_csv(findings, outp)
+        outp = ROOT / "data" / "exports" / f"befunde_{tag}.csv"
+        export_csv(export_set, outp)
         with open(outp, "rb") as fh:
-            ex1.download_button("CSV herunterladen", fh.read(), file_name="befunde.csv",
+            ex1.download_button("CSV herunterladen", fh.read(), file_name=outp.name,
                                 mime="text/csv", use_container_width=True)
         ex1.success(f"Export: {outp}")
     if ex2.button("Excel exportieren", use_container_width=True):
-        outp = ROOT / "data" / "exports" / "befunde.xlsx"
-        export_xlsx(findings, outp)
+        outp = ROOT / "data" / "exports" / f"befunde_{tag}.xlsx"
+        export_xlsx(export_set, outp)
         with open(outp, "rb") as fh:
-            ex2.download_button("Excel herunterladen", fh.read(), file_name="befunde.xlsx",
+            ex2.download_button("Excel herunterladen", fh.read(), file_name=outp.name,
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 use_container_width=True)
         ex2.success(f"Export: {outp}")
