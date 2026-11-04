@@ -8,6 +8,43 @@ Ein lokal ausführbares Data-Quality-Tool für die Hackathon-Challenge **"Missio
 
 ---
 
+## Schnellstart (lokaler Rechner)
+
+**Voraussetzung:** Python 3.11 oder neuer ([python.org/downloads](https://www.python.org/downloads/)). Kein Internet und kein API-Schlüssel zur Laufzeit nötig.
+
+1. Repository holen: `git clone https://github.com/crs-rmn/DQ-Tool.git` und `cd DQ-Tool`
+2. Die vier Excel-Dateien (SAP, Salesforce Produktdaten, Salesforce Service, HubSpot) nach `data/input/` kopieren. Die Dateinamen müssen „SAP“ oder „MARC“, „Produktdaten_Salesforce“, „Service_Salesforce“ bzw. „HubSpot“ enthalten.
+3. Starten:
+   - **macOS/Linux:** `./start_mac.command` (oder im Finder doppelklicken; ggf. vorher `chmod +x start_mac.command`)
+   - **Windows:** `start_windows.bat` doppelklicken
+4. Der Browser öffnet `http://localhost:8501`. Beenden mit `Ctrl + C` im Terminal.
+
+Beim ersten Start legt das Skript eine virtuelle Umgebung an und installiert die Abhängigkeiten (einmalig, ca. 1–2 Minuten). Bei großen Dateien dauert die erste Analyse ca. 1–2 Minuten; danach sind die Daten in `data/.cache/` zwischengespeichert und Seitenwechsel dauern wenige Sekunden.
+
+**Manuell:** `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && streamlit run app/streamlit_app.py`
+
+**Alternativ:** Excel-Dateien in der Seitenleiste per Drag & Drop hochladen.
+
+## Abgabe: Befundliste
+
+Seite **Befunde** → „CSV exportieren“ oder „Excel exportieren“. Eine Zeile je Befund; die ersten Spalten sind
+`Datei, Blatt, Zeile, Feld, Befund, Schweregrad (hoch/mittel/niedrig)`, danach Priorität, Region, Verantwortlicher, Korrekturvorschlag u. a.
+Die Rollen-Dashboards (Domain Expert) exportieren zusätzlich gefiltert nach Fachbereich und Thema.
+
+## Funktionen im Überblick
+
+| Bereich | Was es leistet |
+|---|---|
+| **Mein Dashboard (Rollen)** | Sicht für CEO, Head of MDM, Domain Expert, Head of Data Governance, Head of AI. Befunde werden zu max. 10 Themen zusammengefasst, die 3 wichtigsten hervorgehoben; Drill-down bis zum einzelnen Datensatz. Rollen sind eine Perspektive, keine Berechtigung. |
+| **Regeln** | Eingebaute Regeln ein-/ausschalten, eigene Regeln anlegen, bearbeiten, löschen (Vollständigkeit, Wertebereich, Format, erlaubte Werte, Eindeutigkeit, systemübergreifende Konsistenz). Gespeichert in `config/custom_rules.json`, wirken bei jeder Analyse. |
+| **Regelvorschläge** | Erkennt Muster in unbekannten Daten (Leerwerte, Formate, Ausreißer, Schreibweisen) und schlägt Regeln mit Anteil, Beispielen und Unsicherheit vor. Nie automatisch aktiv. |
+| **DQ-Assistent** | Regelbasierter Chat ohne kostenpflichtige API: erklärt Befunde zu Materialnummern/IDs, prüft Preise auf Plausibilität (auffällig / unplausibel / nachweislich falsch). Ändert keine Daten. |
+| **Geschäftliche Auswirkungen** | Euro-Risiko nur, wo die Daten es tragen (Preisabweichung × installierte Anlagen, Preis unter Herstellkosten); sonst „Finanzieller Einfluss nicht zuverlässig berechenbar“. Mit Berechnungsgrundlage und Unsicherheit. |
+| **Fehler-Stammbaum** | SAP → Salesforce → HubSpot → Service je Materialnummer; nur nachgewiesene Verknüpfungen, vermutete Folgen getrennt. |
+| **Priorität** | Score 0–100 = Schweregrad (40) + geschäftlicher Einfluss (30) + Verbreitung (15) + Folgefehler (15); Gewichte in `config/weights.yaml`. |
+
+---
+
 ## 1. Voraussetzungen
 
 - **Python 3.11 oder neuer** (getestet mit 3.14)
@@ -145,7 +182,7 @@ Zusätzlich werden Priorität, Prioritätsscore, Region, Verantwortlicher, Korre
 **Pro Dimension**: Score = 100 − (gewichtete Befund-Last / geprüfte Datensätze) × 100
 Jeder Befund zählt mit seinem Schweregrad (hoch=1.0 · mittel=0.4 · niedrig=0.1).
 
-**Gesamt-Score**: gewichteter Mittelwert über alle Dimensionen – Gewichte in `config/weights.yaml`.
+**Gesamt-Score**: 100 − (Summe der gewichteten Abzüge aller Befunde ÷ Anzahl aller Datensätze) × 100. Gleiche Formel wie die Regions-Scores; der Gesamt-Score entspricht damit dem nach Datensätzen gewichteten Mittel der Regionen. Abzüge je Befund: hoch 1,0 · mittel 0,4 · niedrig 0,1 (`config/weights.yaml`). Die Dimensions-Scores werden weiterhin einzeln angezeigt.
 
 **Regions-Score**: identisch, aber nur für Befunde mit Marktzuordnung. Regionen mit weniger als 5 Datensätzen werden mit *„Keine ausreichende Datenbasis"* ausgewiesen, nicht mit einem Fantasie-Score.
 

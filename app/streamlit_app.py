@@ -165,6 +165,17 @@ def _upload_signature() -> tuple:
     )
 
 
+@st.cache_resource(show_spinner="Befundliste wird aufgebaut ...")
+def _findings_table(_findings, sig: tuple):
+    """DataFrame + Suchtext + ID-Index einmal pro Analyse aufbauen (170.000 Befunde sind teuer)."""
+    df = findings_to_dataframe(_findings)
+    search_cols = [c for c in ("Befund", "Regel", "Datei", "Blatt", "Feld", "Betroffener Datensatz",
+                               "Originalwert", "Fehlerkategorie") if c in df.columns]
+    haystack = df[search_cols].astype(str).agg(" ".join, axis=1).str.lower() if len(df) else None
+    by_id = {f.finding_id: f for f in _findings}
+    return df, haystack, by_id
+
+
 def _rules_signature(cfg_dir: str) -> tuple:
     """Änderungen an Regeln/Schaltern müssen die Analyse neu auslösen."""
     out = []
@@ -568,7 +579,8 @@ elif page == "Befunde":
         unsafe_allow_html=True,
     )
 
-    df = findings_to_dataframe(findings)
+    df, _haystack, _by_id = _findings_table(findings, (len(findings), _rules_signature(str(CONFIG_DIR)),
+                                                      _upload_signature()))
     jump = st.session_state.jump_filter or {}
     with st.expander("Filter", expanded=True):
         f1, f2, f3, f4 = st.columns(4)
@@ -588,7 +600,7 @@ elif page == "Befunde":
     if jump:
         st.session_state.jump_filter = {}  # einmal verwendet
 
-    view = df.copy()
+    view = df
     if prio:        view = view[view["Priorität"].isin(prio)]
     if system:      view = view[view["System"].isin(system)]
     if dept:        view = view[view["Verantwortlicher"].isin(dept)]
@@ -596,12 +608,10 @@ elif page == "Befunde":
     if category:    view = view[view["Fehlerkategorie"].isin(category)]
     if severity:    view = view[view["Schweregrad"].isin(severity)]
     if search:
-        s = search.lower()
-        mask = view.astype(str).apply(lambda r: r.str.lower().str.contains(s).any(), axis=1)
-        view = view[mask]
+        view = view[_haystack.loc[view.index].str.contains(search.lower(), regex=False)]
 
     unique_in_view = affected_record_count(
-        [f for f in findings if f.finding_id in set(view["Befund-ID"])]
+        [_by_id[i] for i in view["Befund-ID"] if i in _by_id]
     ) if len(view) else 0
     st.caption(
         f"{len(view):,} von {len(df):,} Befunden sichtbar · ".replace(",", ".")
@@ -610,6 +620,10 @@ elif page == "Befunde":
 
     compact_cols = ["Priorität", "Schweregrad", "System", "Datei", "Blatt", "Zeile",
                     "Feld", "Befund", "Verantwortlicher", "Region", "Befundgruppe"]
+    MAX_ROWS = 1000
+    if len(view) > MAX_ROWS:
+        st.caption(f"Angezeigt werden die {MAX_ROWS} dringendsten Befunde. Mit den Filtern oben grenzt du weiter ein.")
+    view = view.head(MAX_ROWS) if len(view) > MAX_ROWS else view
     st.dataframe(view[compact_cols], use_container_width=True, hide_index=True, height=380)
 
     st.markdown("### Detailansicht")
@@ -617,13 +631,13 @@ elif page == "Befunde":
         st.info("Keine Befunde für die aktuellen Filter.")
     else:
         choices = [
-            f"[{row['Priorität']}] {row['Befund'][:90]}  —  {row['Datei']} / {row['Blatt']} Z{row['Zeile']}"
-            for _, row in view.iterrows()
+            f"[{p_}] {b_[:90]}  —  {d_} / {bl_} Z{z_}"
+            for p_, b_, d_, bl_, z_ in zip(view["Priorität"], view["Befund"], view["Datei"], view["Blatt"], view["Zeile"])
         ]
         choice_idx = st.selectbox("Befund auswählen", range(len(choices)),
                                   format_func=lambda i: choices[i])
         row = view.iloc[choice_idx]
-        finding_obj = next((f for f in findings if f.finding_id == row["Befund-ID"]), None)
+        finding_obj = _by_id.get(row["Befund-ID"])
 
         c1, c2 = st.columns([3, 2])
         with c1:

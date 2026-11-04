@@ -52,9 +52,12 @@ def overall_score(findings: list[Finding], pkg: DataPackage, cfg: Config) -> Ove
         penalty = sum(sev_penalty.get(f.severity, 0.2) for f in dim_findings)
         max_penalty = max(total_records, 10)
         per_dim[dim] = max(0.0, 100.0 - (penalty / max_penalty) * 100.0)
-    # gewichteter Gesamtscore
-    total_weight = sum(dims.values()) or 1
-    overall = sum(per_dim.get(dim, 100.0) * w for dim, w in dims.items()) / total_weight
+    # Gesamtscore mit derselben Formel wie die Regions-Scores:
+    # alle gewichteten Abzüge im Verhältnis zur Gesamtzahl der Datensätze.
+    # (Früher: Mittel der Dimensions-Scores - das teilte jeden Abzug faktisch durch die
+    #  Anzahl der Dimensionen und lag dadurch unplausibel weit über allen Regionen.)
+    total_penalty = sum(sev_penalty.get(f.severity, 0.2) for f in findings)
+    overall = max(0.0, 100.0 - (total_penalty / max(total_records, 10)) * 100.0)
 
     sev = {"hoch": 0, "mittel": 0, "niedrig": 0}
     for f in findings:
